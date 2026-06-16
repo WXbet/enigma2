@@ -150,9 +150,6 @@ private:
 	sigc::signal<void(struct videoEvent)> m_video_event;
 	int m_video_clip_fd;
 	ePtr<eTimer> m_showSinglePicTimer;
-#ifdef DREAMNEXTGEN
-	void parseVideoInfo(); // called by timer
-#endif
 	int m_fcc_fd;
 	bool m_fcc_enable;
 	int m_fcc_state;
@@ -176,6 +173,8 @@ public:
 	int getPCMDelay() { return m_pcm_delay; }
 	RESULT setAC3Delay(int delay);
 	int getAC3Delay() { return m_ac3_delay; }
+	static int getStaticPCMDelay() { return m_pcm_delay; }
+	static int getStaticAC3Delay() { return m_ac3_delay; }
 	RESULT setSyncPCR(int pcrpid);
 	RESULT setTextPID(int textpid);
 	RESULT setSyncMaster(int who);
@@ -243,4 +242,81 @@ public:
 
 };
 
+#ifdef DREAMNEXTGEN
+
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavdevice/avdevice.h>
+#include <libavcodec/avcodec.h>
+#include <libswresample/swresample.h>
+#include <libavutil/opt.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/samplefmt.h>
+#include <libavutil/mem.h>
+#include <libavutil/timestamp.h>
+#include <libavutil/audio_fifo.h>
+}
+#include <lib/dvb/alsa.h>
+
+class eIec61937Passthrough;
+struct AVAudioFifo;
+
+#include <atomic>
+
+/* Skip-until-PTS gate: drop PES whose PTS is older than this value.
+ * AV_NOPTS_VALUE = inactive. Set by eAlsaOutput when pcrscr jumps. */
+extern std::atomic<int64_t> g_audio_skip_until_pts;
+
+/* Userspace FFmpeg+ALSA audio decoder, coexists with eDVBAudio. */
+class eAudioDecoder
+{
+public:
+    eAudioDecoder();
+    ~eAudioDecoder();
+
+    int start(int sample_rate, int channels, int bytes_per_sample, enum AVCodecID codec_id);
+    int decode(uint8_t *framedata, int framesize, int64_t pts, int64_t dts);
+    int getCodecDelayMs() const;
+
+    /* Set before start() to transcode PCM → codec and route via
+     * eIec61937Passthrough. Currently only AV_CODEC_ID_AC3 is wired. */
+    enum AVCodecID m_transcode_to = AV_CODEC_ID_NONE;
+
+    unsigned int m_sample_rate;
+    unsigned int m_bytes_per_sample;
+    int64_t m_last_pts;
+
+    const class AVCodec  *m_codec = NULL;
+    class AVCodecContext *m_codec_ctx = NULL;
+    class SwrContext     *m_swr_ctx = NULL;
+    class AVFrame        *m_frame = NULL;
+    class AVPacket       *m_avpkt = NULL;
+
+    eAlsaOutput *m_AlsaOutput;
+    unsigned int m_alsa_channels;
+    unsigned int m_alsa_sample_rate;   ///< actual HW rate from snd_pcm_hw_params_set_rate_near
+    unsigned int m_alsa_dec_rate;      ///< decoder-side rate, compared against frame sample_rate to detect real changes
+
+private:
+    int m_stop;
+    int m_audio_port;   ///< cached /sys/class/amhdmitx/amhdmitx0/audio_source
+    void updateAudioOutputDevice();
+
+    /* Transcode path state. NULL when m_transcode_to == AV_CODEC_ID_NONE. */
+    class AVCodecContext     *m_enc_ctx     = NULL;
+    class AVFrame            *m_enc_frame   = NULL;
+    class AVPacket           *m_enc_pkt     = NULL;
+    AVAudioFifo              *m_enc_fifo    = NULL;
+    class SwrContext         *m_enc_swr     = NULL;  ///< decoded -> encoder input fmt
+    eIec61937Passthrough     *m_iec61937    = NULL;
+    int64_t                   m_enc_next_pts = 0;
+    int  startEncoder();
+    void freeEncoder();
+    int  feedEncoder(class AVFrame *pcm);  ///< swr to FLTP, FIFO, encode, push IEC61937
+    int  drainEncoderFifo(bool flush);
+};
+
+#endif // DREAMNEXTGEN
+
 #endif
+

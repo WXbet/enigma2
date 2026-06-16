@@ -3678,10 +3678,19 @@ void eDVBServicePlay::updateDecoder(bool sendSeekableStateChanged)
 			selectAudioStream();
 		}
 
+#ifdef DREAMNEXTGEN
+		/* SR (m_is_stream) needs real PCR-PID for DMX_GET_STC to track the
+		 * demux clock — kernel AV-sync would otherwise have no broadcast PCR. */
+		if (!(m_is_pvr || m_timeshift_active))
+			m_decoder->setSyncPCR(pcrpid);
+		else
+			m_decoder->setSyncPCR(-1);
+#else
 		if (!(m_is_pvr || m_is_stream || m_timeshift_active))
 			m_decoder->setSyncPCR(pcrpid);
 		else
 			m_decoder->setSyncPCR(-1);
+#endif
 
 		if (m_decoder_index == 0)
 		{

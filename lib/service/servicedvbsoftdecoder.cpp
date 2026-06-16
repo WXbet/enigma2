@@ -727,8 +727,14 @@ void eDVBSoftDecoder::updateDecoder(int vpid, int vpidtype, int pcrpid)
 			}
 		}
 
+#ifdef DREAMNEXTGEN
+		/* AMlogic kernel needs real PCR-PID so demux can track broadcast STC
+		 * for DMX_GET_STC (audio-thread anchor source). */
+		m_decoder->setSyncPCR(pcrpid);
+#else
 		// Using explicit pcrpid breaks video on some HiSilicon devices (e.g. sf8008) in PVR loopback mode
 		m_decoder->setSyncPCR(-1);
+#endif
 
 		if (mustPlay)
 		{
