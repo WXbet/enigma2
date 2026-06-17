@@ -120,6 +120,11 @@ public:
     int  pushData(uint8_t *data, int size, int64_t pts);
     bool running() const { return m_handle != nullptr; }
 
+    /* User-initiated seek (seekTo/seekRelative/FF-stop). Drop in-flight chunks,
+     * arm re-anchor on next chunk, signal kernel tsync discontinuity so the
+     * pacer drops the now-stale pts_audio/pts_video and re-locks on fresh PCR. */
+    void flushOnSeek();
+
     void thread();   /* writer thread loop */
 
     unsigned int sample_rate() const { return m_sample_rate; }

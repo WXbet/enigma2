@@ -499,6 +499,18 @@ void eAlsaOutput::stop()
     pthread_mutex_unlock(&m_state_mutex);
 }
 
+void eAlsaOutput::flushOnSeek()
+{
+    if (!m_fifo) return;
+    pthread_mutex_lock(&m_state_mutex);
+    m_fifo->flush();
+    m_calced_apts = -1;
+    m_pcr_offset_computed = false;
+    pthread_mutex_unlock(&m_state_mutex);
+    eDebug("[eAlsaOutput] flushOnSeek: FIFO cleared, anchor re-armed");
+    eAVSyncCore::getInstance()->enableKernelSync();
+}
+
 int eAlsaOutput::pushData(uint8_t *data, int size, int64_t pts)
 {
     if (m_stop || !m_fifo || !data || size <= 0) return -1;

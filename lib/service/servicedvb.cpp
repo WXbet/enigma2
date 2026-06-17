@@ -14,6 +14,9 @@
 #include <lib/dvb/dvb.h>
 #include <lib/dvb/db.h>
 #include <lib/dvb/decoder.h>
+#ifdef DREAMNEXTGEN
+#include <lib/dvb/alsa.h>
+#endif
 
 #include <lib/base/cfile.h>
 #include <lib/dvb/pmtparse.h>
@@ -2001,6 +2004,14 @@ RESULT eDVBServicePlay::seekTo(pts_t to)
 	m_cue->seekTo(0, to);
 	m_dvb_subtitle_pages.clear();
 	m_subtitle_pages.clear();
+#ifdef DREAMNEXTGEN
+	/* Drop FIFO + re-arm anchor + signal kernel discontinuity so the new
+	 * post-seek PCR epoch becomes the next anchor target. Without this the
+	 * old in-flight chunks keep playing while pts_video jumps to the new
+	 * file offset (audio "wo ganz anders"). */
+	if (eAlsaOutput *a = eAlsaOutput::instance(nullptr))
+		a->flushOnSeek();
+#endif
 
 	return 0;
 }
@@ -2031,6 +2042,10 @@ RESULT eDVBServicePlay::seekRelative(int direction, pts_t to)
 	m_cue->seekTo(mode, to);
 	m_dvb_subtitle_pages.clear();
 	m_subtitle_pages.clear();
+#ifdef DREAMNEXTGEN
+	if (eAlsaOutput *a = eAlsaOutput::instance(nullptr))
+		a->flushOnSeek();
+#endif
 	return 0;
 }
 
