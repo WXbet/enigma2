@@ -3679,12 +3679,14 @@ void eDVBServicePlay::updateDecoder(bool sendSeekableStateChanged)
 		}
 
 #ifdef DREAMNEXTGEN
-		/* SR (m_is_stream) needs real PCR-PID for DMX_GET_STC to track the
-		 * demux clock — kernel AV-sync would otherwise have no broadcast PCR. */
-		if (!(m_is_pvr || m_timeshift_active))
-			m_decoder->setSyncPCR(pcrpid);
-		else
-			m_decoder->setSyncPCR(-1);
+		/* Kernel AV-sync (eAVSyncCore + eAlsaOutput anchor) needs the real PCR-PID
+		 * for DMX_GET_STC to track the demux clock — true for LiveTV, SR, PVR
+		 * playback and timeshift alike. Falling back to 0x1FFF tells the kernel
+		 * to synthesize demux_pcr from the first PES; that survives steady-state
+		 * playback but breaks after a byte-skip FF/seek (no PES boundary at the
+		 * landing offset → DMX_GET_STC stays NOPTS → anchor never converges →
+		 * eFilePushThread stalls on driver-eof forever). */
+		m_decoder->setSyncPCR(pcrpid);
 #else
 		if (!(m_is_pvr || m_is_stream || m_timeshift_active))
 			m_decoder->setSyncPCR(pcrpid);
