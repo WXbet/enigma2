@@ -504,11 +504,19 @@ void eAlsaOutput::flushOnSeek()
     if (!m_fifo) return;
     pthread_mutex_lock(&m_state_mutex);
     m_fifo->flush();
-    m_calced_apts = -1;
-    m_pcr_offset_computed = false;
+    m_calced_apts = -1;   /* re-anchor on next chunk (new chunk_pts reference) */
+    /* DO NOT reset m_pcr_offset_computed.
+     * pcr_offset is a pipeline-latency constant — set once at first anchor
+     * and never re-computed. Resetting on seek causes the next anchor to
+     * read transient chunk_pts vs PCR delta (file just started feeding from
+     * new offset, demux STC not yet caught up) → pcr_offset gets slammed
+     * to 500-1000ms → apcr stuck permanently. DreamOS strace confirms:
+     * /proc/stb/pcr_offset is written ONCE at service start and one
+     * adaptive bump much later, NEVER on seek. */
     pthread_mutex_unlock(&m_state_mutex);
-    eDebug("[eAlsaOutput] flushOnSeek: FIFO cleared, anchor re-armed");
-    eAVSyncCore::getInstance()->enableKernelSync();
+    eDebug("[eAlsaOutput] flushOnSeek: FIFO cleared, anchor re-armed (pcr_offset preserved)");
+    /* DO NOT call enableKernelSync — DreamOS never touches tsync/* on seek.
+     * Kernel handles seek-discontinuity via its own demux flush path. */
 }
 
 int eAlsaOutput::pushData(uint8_t *data, int size, int64_t pts)
@@ -752,7 +760,10 @@ void eAlsaOutput::thread()
                             if (abs_apcr > 100) {
                                 eDebug("[eAlsaOutput] periodic re-anchor (drift=%+dms)", apcr_ms);
                                 m_calced_apts          = -1;
-                                m_pcr_offset_computed  = false;
+                                /* DO NOT reset m_pcr_offset_computed — see
+                                 * flushOnSeek for the rationale. pcr_offset
+                                 * is a one-shot pipeline-latency constant,
+                                 * not a drift-correction lever. */
                             }
                         }
                     }
