@@ -2075,7 +2075,17 @@ RESULT eDVBServicePlay::getPlayPosition(pts_t &pos)
 	}
 	// Case 2: Normal hardware decoder
 	else if (m_decoder) {
-		if (m_noaudio && m_have_video_pid)
+		bool use_video_pts = (m_noaudio && m_have_video_pid);
+#ifdef DREAMNEXTGEN
+		/* During HW VIDEO_FAST_FORWARD audio is stopped (eAlsaOutput.stop)
+		 * so audio PTS doesn't advance. Position display would stagnate.
+		 * Use video PTS during HW FF so the timeline reflects actual
+		 * decoder progress. m_fastforward > 1 = HW FF (2/4/8x); 1 =
+		 * trickmode (skipmode-based, audio still active). */
+		if (m_fastforward > 1 && m_have_video_pid)
+			use_video_pts = true;
+#endif
+		if (use_video_pts)
 			r = m_decoder->getPTS(1, pos); // Video PTS
 		else
 			r = m_decoder->getPTS(0, pos); // Auto (original behavior)
