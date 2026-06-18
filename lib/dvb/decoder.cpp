@@ -1644,20 +1644,6 @@ int eTSMPEGDecoder::setState()
 			m_video->playRecovery();   // VIDEO_PLAY (flushes trickmode iframe state)
 			if (m_audio) m_audio->unfreeze();  // AUDIO_CONTINUE
 		}
-		/* stateDecoderFastForward → statePlay: at FF(2)/FF(4) the kernel
-		 * decoder's internal skip count is moderate; the flushPVR sequence
-		 * already triggered by eDVBServicePlay::seekTo (pvr_thread pause +
-		 * dvr_fd ioctl(0) + demux->flush) is enough to reset the pipeline.
-		 * At FF(8) the skip count is much higher and the decoder retains
-		 * stale trick state through flushPVR → visible video stutter /
-		 * freeze / artefacts after play. DreamOS strace shows it issues
-		 * an explicit VIDEO_CLEAR_BUFFER between FF(8) and FF(0) for
-		 * exactly this. flushPVR does not call VIDEO_CLEAR_BUFFER itself,
-		 * so we add it here. Cheap single ioctl, no-op at lower FF rates. */
-		if (m_video && m_state == statePlay
-			&& s_dnxt_prev_state == stateDecoderFastForward) {
-			m_video->flush();    // VIDEO_CLEAR_BUFFER
-		}
 #endif
 		if (changed & (changeState|changeVideo) && m_video)
 		{
