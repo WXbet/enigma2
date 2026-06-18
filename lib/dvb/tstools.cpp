@@ -336,6 +336,19 @@ int eDVBTSTools::fixupPTS(const off_t &offset, pts_t &now)
 		}
 
 		pts_t pos = m_pts_begin;
+#ifdef DREAMNEXTGEN
+		/* AML decoder.getPTS() returns 0 when the video decoder hasn't yet
+		 * produced a frame (just-restarted after seek, trickmode exit, etc).
+		 * The wrap-around fallback below would compute (0 - first_pts) mod
+		 * 2^33 = ~2 billion for recordings with broadcast PTS epoch → bogus
+		 * 6-hour position display (the 'Fantasiezahlen in Zeitleiste' we
+		 * chased for hours). Treat now==0 as 'decoder not ready, give
+		 * stream-start position' so the UI shows 00:00 briefly until the
+		 * next VIDEO_GET_PTS comes back valid. */
+		if (now == 0) {
+			return 0;
+		}
+#endif
 		if ((now < pos) && ((pos - now) < 90000 * 10))
 		{
 			pos = 0;

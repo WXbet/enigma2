@@ -760,10 +760,26 @@ void eAlsaOutput::thread()
                             if (abs_apcr > 100) {
                                 eDebug("[eAlsaOutput] periodic re-anchor (drift=%+dms)", apcr_ms);
                                 m_calced_apts          = -1;
-                                /* DO NOT reset m_pcr_offset_computed — see
-                                 * flushOnSeek for the rationale. pcr_offset
-                                 * is a one-shot pipeline-latency constant,
-                                 * not a drift-correction lever. */
+                                /* DO NOT reset m_pcr_offset_computed on small drift —
+                                 * pcr_offset is a one-shot pipeline-latency constant.
+                                 * BUT: if drift is HUGE (> 500ms) and stable across
+                                 * multiple heartbeats, the recording segment we just
+                                 * landed on has a fundamentally different chunk_pts↔PCR
+                                 * relationship than the initial anchor. One-shot
+                                 * recompute (DreamOS-style: they bump pcr_offset 75→215ms
+                                 * once during a session, never more). */
+                                static int s_huge_drift_count = 0;
+                                if (abs_apcr > 500) {
+                                    s_huge_drift_count++;
+                                    if (s_huge_drift_count >= 2) {  /* 2 confirmed → bump */
+                                        eDebug("[eAlsaOutput] one-shot av-correction: drift %+dms persistent → recompute pcr_offset",
+                                               apcr_ms);
+                                        m_pcr_offset_computed = false;
+                                        s_huge_drift_count = 0;
+                                    }
+                                } else {
+                                    s_huge_drift_count = 0;
+                                }
                             }
                         }
                     }
