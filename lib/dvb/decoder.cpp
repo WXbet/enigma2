@@ -1645,16 +1645,6 @@ int eTSMPEGDecoder::setState()
 			if (m_audio) m_audio->unfreeze();  // AUDIO_CONTINUE
 		}
 #endif
-#ifdef DREAMNEXTGEN
-		/* FF→play: DMX_STOP+VIDEO_CLEAR_BUFFER+DMX_START BEFORE FF(0)
-		 * so the kernel decoder's stale trick state is cleared before
-		 * the rate transition. eDVBServicePlay::setFastForward_internal
-		 * skips its seekTo call in this case (HW FF path) so this is the
-		 * ONLY flush — no doubling with flushPVR. */
-		if (m_video && m_state == statePlay
-			&& s_dnxt_prev_state == stateDecoderFastForward)
-			m_video->dnxtPostFastForward();
-#endif
 		if (changed & (changeState|changeVideo) && m_video)
 		{
 			m_video->setSlowMotion(s[1]);
