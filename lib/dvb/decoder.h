@@ -76,6 +76,12 @@ public:
 	/* Explicit VIDEO_PLAY ioctl used by trick→play recovery dance.
 	 * Distinct from startPid() which also opens demux + sets stream type. */
 	void playRecovery();
+	/* DreamOS-verified post-VIDEO_FAST_FORWARD flush sequence:
+	 * DMX_STOP + VIDEO_CLEAR_BUFFER + DMX_START. Without this the kernel
+	 * decoder_set_trickmode change set by VIDEO_FAST_FORWARD never visibly
+	 * applies — strace shows DreamOS always pairs FAST_FORWARD(N) with this
+	 * sequence right after VIDEO_CONTINUE. */
+	void dnxtPostFastForward();
 #endif
 	int getPTS(pts_t &now);
 	virtual ~eDVBVideo();

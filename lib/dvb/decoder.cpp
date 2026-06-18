@@ -796,6 +796,24 @@ void eDVBVideo::playRecovery()
 		::ioctl(m_fd, VIDEO_PLAY);
 	pthread_mutex_unlock(&s_video_ioctl_lock);
 }
+
+void eDVBVideo::dnxtPostFastForward()
+{
+	/* DreamOS strace verbatim per FF step (entering FF2/FF4/FF8/…):
+	 *   VIDEO_FAST_FORWARD(N) → VIDEO_CONTINUE → DMX_STOP →
+	 *   VIDEO_CLEAR_BUFFER → DMX_START
+	 * Without the DMX_STOP/CLEAR/DMX_START tail the kernel
+	 * decoder_set_trickmode change (triggered by VIDEO_FAST_FORWARD)
+	 * never visibly takes effect on the screen. */
+	if (m_fd_demux < 0 || m_fd < 0) return;
+	pthread_mutex_lock(&s_video_ioctl_lock);
+	if (eDVBVideo::m_debug)
+		eDebug("[eDVBVideo%d] dnxtPostFastForward: DMX_STOP+VIDEO_CLEAR_BUFFER+DMX_START", m_dev);
+	::ioctl(m_fd_demux, DMX_STOP);
+	::ioctl(m_fd, VIDEO_CLEAR_BUFFER);
+	::ioctl(m_fd_demux, DMX_START);
+	pthread_mutex_unlock(&s_video_ioctl_lock);
+}
 #endif
 
 int eDVBVideo::setFastForward(int skip)
@@ -1625,6 +1643,13 @@ int eTSMPEGDecoder::setState()
 				m_video->unfreeze();
 			else
 				m_video->freeze();
+#ifdef DREAMNEXTGEN
+			/* DreamOS pairs every VIDEO_FAST_FORWARD(N>0) with a
+			 * DMX_STOP/VIDEO_CLEAR_BUFFER/DMX_START tail so the kernel's
+			 * decoder_set_trickmode actually displays the trick output. */
+			if (m_state == stateDecoderFastForward && s[2] > 0)
+				m_video->dnxtPostFastForward();
+#endif
 		}
 #ifdef DREAMNEXTGEN
 		s_dnxt_prev_state = m_state;
