@@ -1498,14 +1498,7 @@ int eTSMPEGDecoder::setState()
 	if (changed & (changeState|changeVideo|changePCR))
 	{
 		eAVSyncCore *avsync = eAVSyncCore::getInstance();
-		/* DreamOS pattern: kernel-tsync is set up ONCE per service and runs
-		 * undisturbed through play/pause/FF/trickmode/slowmotion. Only a
-		 * real service stop tears it down. Previously this treated every
-		 * non-(play|pause) state as stopping, which re-initialised the
-		 * whole tsync engine on every FF step + on FF→play and caused the
-		 * pcr-master sync to be ripped out mid-playback, producing visible
-		 * video stutter/artefacts after FF→play. */
-		bool stopping = (m_state == stateStop);
+		bool stopping = (m_state != statePlay && m_state != statePause);
 		static int s_last_vpid    = -1;
 		static int s_last_pcrpid  = -1;
 		static int s_last_demux   = -1;
