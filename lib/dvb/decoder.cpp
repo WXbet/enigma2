@@ -1598,20 +1598,23 @@ int eTSMPEGDecoder::setState()
 #ifdef DREAMNEXTGEN
 		/* /sys/class/video/freerun_mode toggle for HW VIDEO_FAST_FORWARD.
 		 * AML kernel ignores the FF-multiplier (2/4/8) unless the video pacer
-		 * runs freerun (decode-as-fast-as-possible). freerun_mode=1 enables
-		 * this. CRITICAL: reset to 0 the moment we leave decoderfastforward —
-		 * a sticky freerun=1 makes any subsequent streaming/dreamaudiosink
-		 * session run video faster than realtime (3s/min drift). Verified in
-		 * earlier debug session. So bind the toggle strictly to the
-		 * decoderfastforward state. */
+		 * runs freerun. freerun_mode=1 enables this. Reset to 0 on every
+		 * other state — a sticky freerun=1 makes dreamaudiosink streaming
+		 * run video faster than realtime. Write ONLY on actual state
+		 * change (not on every setState/changeVideo/changeAudio call) so
+		 * we don't churn the sysfs during steady play. */
 		{
-			int fr = (m_state == stateDecoderFastForward) ? 1 : 0;
-			int fd = ::open("/sys/class/video/freerun_mode", O_WRONLY|O_CLOEXEC);
-			if (fd >= 0) {
-				char c = fr ? '1' : '0';
-				int n = ::write(fd, &c, 1);
-				(void)n;
-				::close(fd);
+			static int s_dnxt_freerun_state = -1;
+			int fr_want = (m_state == stateDecoderFastForward) ? 1 : 0;
+			if (s_dnxt_freerun_state != fr_want) {
+				int fd = ::open("/sys/class/video/freerun_mode", O_WRONLY|O_CLOEXEC);
+				if (fd >= 0) {
+					char c = fr_want ? '1' : '0';
+					int n = ::write(fd, &c, 1);
+					(void)n;
+					::close(fd);
+				}
+				s_dnxt_freerun_state = fr_want;
 			}
 		}
 		/* Detect transition trick/FF/slowmotion → play. The AML video pacer
