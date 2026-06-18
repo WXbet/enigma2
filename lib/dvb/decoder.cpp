@@ -1596,6 +1596,24 @@ int eTSMPEGDecoder::setState()
 			};
 		int *s = state_table[m_state];
 #ifdef DREAMNEXTGEN
+		/* /sys/class/video/freerun_mode toggle for HW VIDEO_FAST_FORWARD.
+		 * AML kernel ignores the FF-multiplier (2/4/8) unless the video pacer
+		 * runs freerun (decode-as-fast-as-possible). freerun_mode=1 enables
+		 * this. CRITICAL: reset to 0 the moment we leave decoderfastforward —
+		 * a sticky freerun=1 makes any subsequent streaming/dreamaudiosink
+		 * session run video faster than realtime (3s/min drift). Verified in
+		 * earlier debug session. So bind the toggle strictly to the
+		 * decoderfastforward state. */
+		{
+			int fr = (m_state == stateDecoderFastForward) ? 1 : 0;
+			int fd = ::open("/sys/class/video/freerun_mode", O_WRONLY|O_CLOEXEC);
+			if (fd >= 0) {
+				char c = fr ? '1' : '0';
+				int n = ::write(fd, &c, 1);
+				(void)n;
+				::close(fd);
+			}
+		}
 		/* Detect transition trick/FF/slowmotion → play. The AML video pacer
 		 * gets stuck on the last decoded iframe after trickmode unless we
 		 * issue an explicit VIDEO_FREEZE→VIDEO_PLAY pair to flush its
