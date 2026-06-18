@@ -72,6 +72,11 @@ public:
 	int setSlowMotion(int repeat);
 	int setFastForward(int skip);
 	void unfreeze();
+#ifdef DREAMNEXTGEN
+	/* Explicit VIDEO_PLAY ioctl used by trick→play recovery dance.
+	 * Distinct from startPid() which also opens demux + sets stream type. */
+	void playRecovery();
+#endif
 	int getPTS(pts_t &now);
 	virtual ~eDVBVideo();
 	RESULT connectEvent(const sigc::slot<void(struct iTSMPEGDecoder::videoEvent)> &event, ePtr<eConnection> &conn);

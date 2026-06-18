@@ -781,6 +781,23 @@ int eDVBVideo::setSlowMotion(int repeat)
 	return 0;
 }
 
+#ifdef DREAMNEXTGEN
+void eDVBVideo::playRecovery()
+{
+	if (m_fd < 0) return;
+	pthread_mutex_lock(&s_video_ioctl_lock);
+	if (eDVBVideo::m_debug) {
+		eDebugNoNewLineStart("[eDVBVideo%d] VIDEO_PLAY (recovery) ", m_dev);
+		if (::ioctl(m_fd, VIDEO_PLAY) < 0)
+			eDebugNoNewLine("failed: %m");
+		else
+			eDebugNoNewLine("ok");
+	} else
+		::ioctl(m_fd, VIDEO_PLAY);
+	pthread_mutex_unlock(&s_video_ioctl_lock);
+}
+#endif
+
 int eDVBVideo::setFastForward(int skip)
 {
 	if (m_fd >= 0)
@@ -1578,6 +1595,28 @@ int eTSMPEGDecoder::setState()
 				/* [stateSlowMotion] =           */ {1, m_ff_sm_ratio, 0}
 			};
 		int *s = state_table[m_state];
+#ifdef DREAMNEXTGEN
+		/* Detect transition trick/FF/slowmotion → play. The AML video pacer
+		 * gets stuck on the last decoded iframe after trickmode unless we
+		 * issue an explicit VIDEO_FREEZE→VIDEO_PLAY pair to flush its
+		 * pipeline state. Verified from DreamOS strace (FF→OK return-to-play
+		 * always does FREEZE+PLAY before FAST_FORWARD(0)+CONTINUE). LiveTV
+		 * never enters trick/FF/slowmotion so this never fires on those
+		 * paths — safe to add unconditionally under DREAMNEXTGEN. */
+		static int s_dnxt_prev_state = stateStop;
+		bool dnxt_recovery = m_video
+			&& m_state == statePlay
+			&& (s_dnxt_prev_state == stateDecoderFastForward
+				|| s_dnxt_prev_state == stateTrickmode
+				|| s_dnxt_prev_state == stateSlowMotion);
+		if (dnxt_recovery) {
+			eDebug("[eTSMPEGDecoder] DreamOS recovery dance: prev=%d → statePlay",
+				   s_dnxt_prev_state);
+			m_video->freeze();         // VIDEO_FREEZE
+			m_video->playRecovery();   // VIDEO_PLAY (flushes trickmode iframe state)
+			if (m_audio) m_audio->unfreeze();  // AUDIO_CONTINUE
+		}
+#endif
 		if (changed & (changeState|changeVideo) && m_video)
 		{
 			m_video->setSlowMotion(s[1]);
@@ -1587,6 +1626,9 @@ int eTSMPEGDecoder::setState()
 			else
 				m_video->freeze();
 		}
+#ifdef DREAMNEXTGEN
+		s_dnxt_prev_state = m_state;
+#endif
 		if (changed & (changeState|changeAudio) && m_audio)
 		{
 			if (s[0])
