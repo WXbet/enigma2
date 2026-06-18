@@ -128,15 +128,16 @@ int64_t eAVSyncCore::readHex(const char *path)
 
 int eAVSyncCore::enableKernelSync()
 {
-	/* Drop any stale pts_audio/pts_video left by a foreign owner
-	 * (e.g. exteplayer3/gstplayer2 in HLS mode). pts_audio in particular
-	 * is never updated by Live-TV's SW-decode path before our drift
-	 * loop runs, so a stale value from exteplayer3 keeps pcrmaster from
-	 * converging — kernel sees audio "way behind" and drops video frames
-	 * to compensate. */
-	writeNode("/sys/class/tsync/pts_audio", "0");
-	writeNode("/sys/class/tsync/pts_video", "0");
-	writeNode("/sys/class/tsync/discontinue", "1");
+	/* DreamOS-style: do NOT write pts_audio/pts_video/discontinue ourselves.
+	 * Verified by strace of the DreamOS Apr-2023 image: it never touches
+	 * those tsync sysfs nodes — the kernel manages them entirely via the
+	 * /dev/tsync SET_DEMUX_INFO ioctl + DMX_START. Writing pts_audio=0 in
+	 * particular caused the kernel to drop frames against a phantom "audio
+	 * way behind" signal on certain streaming-session takeovers. We keep
+	 * the mode=pcrmaster + enable=1 writes as a defensive init in case the
+	 * kernel was left in a previous service's state (DreamOS doesn't even
+	 * do this — its tsync_pcr_start path inside SET_DEMUX_INFO sets mode
+	 * autonomously). Drop later if it proves unnecessary on our build. */
 	int r1 = writeNode("/sys/class/tsync/mode", "2");
 	int r2 = writeNode("/sys/class/tsync/enable", "1");
 	if (r1 == 0 && r2 == 0) {
