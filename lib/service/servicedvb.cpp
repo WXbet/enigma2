@@ -2077,12 +2077,12 @@ RESULT eDVBServicePlay::getPlayPosition(pts_t &pos)
 	else if (m_decoder) {
 		bool use_video_pts = (m_noaudio && m_have_video_pid);
 #ifdef DREAMNEXTGEN
-		/* During HW VIDEO_FAST_FORWARD audio is stopped (eAlsaOutput.stop)
-		 * so audio PTS doesn't advance. Position display would stagnate.
-		 * Use video PTS during HW FF so the timeline reflects actual
-		 * decoder progress. m_fastforward > 1 = HW FF (2/4/8x); 1 =
-		 * trickmode (skipmode-based, audio still active). */
-		if (m_fastforward > 1 && m_have_video_pid)
+		/* During HW VIDEO_FAST_FORWARD AND during skipmode trickmode
+		 * (FF(16)+), audio is stopped so audio PTS doesn't advance. Position
+		 * display would stagnate or show wildly wrong values. Use video PTS
+		 * in both cases so the timeline reflects actual decoder progress.
+		 * m_fastforward > 1 → HW FF (2/4/8x), m_skipmode != 0 → skipmode FF. */
+		if ((m_fastforward > 1 || m_skipmode != 0) && m_have_video_pid)
 			use_video_pts = true;
 #endif
 		if (use_video_pts)
