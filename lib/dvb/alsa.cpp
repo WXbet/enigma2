@@ -654,11 +654,6 @@ void eAlsaOutput::thread()
                 int waited_ms = 0;
                 while (pcr != AV_NOPTS_VALUE && check > 5 && check < 5000 &&
                        waited_ms < 2000 && !m_stop) {
-                    if ((m_diag_sleep_count++ % 20) == 0 && m_diag_sleep_count < 200) {
-                        eDebug("[eAlsaOutput] DIAG preroll-wait#%u slot_pts=0x%llx pcr=0x%llx check=%+dms waited=%dms",
-                               m_diag_sleep_count, (long long)slot_pts, (long long)pcr,
-                               check, waited_ms);
-                    }
                     usleep(50 * 1000);
                     waited_ms += 50;
                     pcr = readPcrScr();
