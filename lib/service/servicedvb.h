@@ -288,6 +288,14 @@ protected:
 	int m_skipmode;
 	int m_fastforward;
 	int m_slowmotion;
+#ifdef DREAMNEXTGEN
+	/* Position captured at skipmode entry (FF>=16). During trickmode the
+	 * cue advances the file cursor faster than wall-clock; audio decoder
+	 * consumes PES from skipped positions and PTS becomes garbage / past
+	 * file-end. getPlayPosition falls back to this frozen value while
+	 * skipmode is active so seekTo and UI position stay sane. */
+	pts_t m_pos_before_skipmode;
+#endif
 
 	/* tap */
 

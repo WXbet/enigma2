@@ -1106,6 +1106,9 @@ eDVBServicePlay::eDVBServicePlay(const eServiceReference &ref, eDVBService *serv
 	m_skipmode(0),
 	m_fastforward(0),
 	m_slowmotion(0),
+#ifdef DREAMNEXTGEN
+	m_pos_before_skipmode(0),
+#endif
 	m_tap_recorder(0),
 	m_cuesheet_changed(0),
 	m_cutlist_enabled(1),
@@ -1849,6 +1852,17 @@ RESULT eDVBServicePlay::setFastForward_internal(int ratio, bool final_seek)
 	if (m_skipmode != skipmode)
 	{
 		eDebug("[eDVBServicePlay] setFastForward setting cue skipmode to %d", skipmode);
+#ifdef DREAMNEXTGEN
+		/* Snapshot current position when entering skipmode trickmode (FF>=16).
+		 * During trickmode getPlayPosition would read garbage audio PTS from
+		 * skipped-ahead PES; we return this captured value instead. */
+		if (m_skipmode == 0 && skipmode != 0) {
+			pts_t cur = 0;
+			if (getPlayPosition(cur) >= 0 && cur > 0)
+				m_pos_before_skipmode = cur;
+			eDebug("[eDVBServicePlay] skipmode entry: captured pos=%lld", m_pos_before_skipmode);
+		}
+#endif
 		if (m_cue)
 		{
 			long long _skipmode = skipmode;
@@ -2058,6 +2072,18 @@ RESULT eDVBServicePlay::getPlayPosition(pts_t &pos)
 
 	if ((m_timeshift_enabled ? m_service_handler_timeshift : m_service_handler).getPVRChannel(pvr_channel))
 		return -1;
+
+#ifdef DREAMNEXTGEN
+	/* During skipmode trickmode (FF>=16) the cue runs the file cursor far
+	 * ahead. Reading audio PTS from the decoder returns garbage values
+	 * (frequently past file-end → 23h pts), which then make seekTo at
+	 * trickmode→play jump out of bounds and trigger EOF action. Return
+	 * the frozen position captured at trickmode entry. */
+	if (m_skipmode != 0 && m_pos_before_skipmode > 0) {
+		pos = m_pos_before_skipmode;
+		return 0;
+	}
+#endif
 
 	int r = 0;
 
