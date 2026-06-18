@@ -1827,6 +1827,9 @@ RESULT eDVBServicePlay::setFastForward_internal(int ratio, bool final_seek)
 {
 	int skipmode, ffratio, ret = 0;
 	pts_t pos=0;
+#ifdef DREAMNEXTGEN
+	int prev_fastforward = m_fastforward;
+#endif
 
 	if (ratio > 8)
 	{
@@ -1897,8 +1900,28 @@ RESULT eDVBServicePlay::setFastForward_internal(int ratio, bool final_seek)
 
 	if (pos)
 	{
-		RESULT r = seekTo(pos);
-		eDebug("[eDVBServicePlay] setFastForward final seek after trickplay ret %d", r);
+#ifdef DREAMNEXTGEN
+		/* HW FF reads the file linearly — the decoder skips frames,
+		 * the file cursor advances naturally with consumption rate. At
+		 * FF→play the cursor is already at the correct position; calling
+		 * seekTo here would only re-trigger eDVBChannel::flushPVR (which
+		 * pauses+resumes the ts-reader thread and emits evtStopped) and
+		 * race with the post-FF decoder transition → visible stutter /
+		 * freeze / wrong av-drift at FF(8). DreamOS strace shows it does
+		 * NOT seek the file at FF→play; it only flushes the decoder
+		 * pipeline via DMX_STOP/CLEAR_BUFFER/DMX_START (handled in
+		 * eTSMPEGDecoder::setState below). Audio gets re-anchored to
+		 * the new PCR epoch via the alsa flush. */
+		if (prev_fastforward > 1 && ffratio == 0 && m_skipmode == 0) {
+			eDebug("[eDVBServicePlay] HW FF→play: skip file seek, audio re-anchor only");
+			if (eAlsaOutput *a = eAlsaOutput::instance(nullptr))
+				a->flushOnSeek();
+		} else
+#endif
+		{
+			RESULT r = seekTo(pos);
+			eDebug("[eDVBServicePlay] setFastForward final seek after trickplay ret %d", r);
+		}
 	}
 
 	return ret;
