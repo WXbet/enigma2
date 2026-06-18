@@ -620,18 +620,26 @@ void eAlsaOutput::thread()
                 int32_t check = (pcr != AV_NOPTS_VALUE)
                     ? (int32_t)((uint32_t)slot_pts - (uint32_t)pcr) / 90 : 0;
                 int waited_ms = 0;
+                int64_t initial_pcr = pcr;
+                /* Extended to 5s + every-iteration logging so we can see
+                 * whether pcrscr is advancing or frozen after HW FF→play
+                 * (FF(8)+ symptom: pcr_off clamps to 0 because delta stays
+                 * negative for the full timeout). */
                 while (pcr != AV_NOPTS_VALUE && check > 5 && check < 5000 &&
-                       waited_ms < 2000 && !m_stop) {
-                    if ((m_diag_sleep_count++ % 20) == 0 && m_diag_sleep_count < 200) {
-                        eDebug("[eAlsaOutput] DIAG preroll-wait#%u slot_pts=0x%llx pcr=0x%llx check=%+dms waited=%dms",
-                               m_diag_sleep_count, (long long)slot_pts, (long long)pcr,
-                               check, waited_ms);
-                    }
+                       waited_ms < 5000 && !m_stop) {
+                    eDebug("[eAlsaOutput] DIAG preroll-wait slot_pts=0x%llx pcr=0x%llx check=%+dms waited=%dms pcr_advance=%+dms",
+                           (long long)slot_pts, (long long)pcr, check, waited_ms,
+                           (int32_t)((uint32_t)pcr - (uint32_t)initial_pcr) / 90);
                     usleep(50 * 1000);
                     waited_ms += 50;
                     pcr = readPcrScr();
                     if (pcr == AV_NOPTS_VALUE) break;
                     check = (int32_t)((uint32_t)slot_pts - (uint32_t)pcr) / 90;
+                }
+                if (waited_ms > 0) {
+                    eDebug("[eAlsaOutput] DIAG preroll-wait DONE slot_pts=0x%llx pcr=0x%llx check=%+dms waited=%dms pcr_advance=%+dms",
+                           (long long)slot_pts, (long long)pcr, check, waited_ms,
+                           (int32_t)((uint32_t)pcr - (uint32_t)initial_pcr) / 90);
                 }
             }
 
