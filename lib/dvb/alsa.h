@@ -87,6 +87,16 @@ protected:
     int     m_pcr_demux_idx;
     int64_t readPcrScr() const;
 
+    /* Post-flush preroll: wait for FIFO to fill before consuming any chunk.
+     * Bei flushOnSeek (seek / FF→play / timeshift switch) sind die ersten
+     * Chunks transient: chunk-PTS und kernel-STC haben sich noch nicht
+     * eingependelt → anchor liest verfälschte (slot_pts, pcr) → pcr_offset
+     * wird auf einen falschen Wert geclamped → av-Drift langsam (10+ s).
+     * Wenn wir warten bis die FIFO N Slots gepuffert hat, sind chunk-PTS
+     * und PCR beim ersten Anchor "settled" → korrekter pcr_offset sofort.
+     * Trade-off: Audio startet ~N×slot_dauer später (für 30 slots ≈ 1.2s). */
+    int     m_post_flush_preroll_pending;   /* 1 = still waiting for FIFO fill */
+
     unsigned int m_diag_sleep_count;
     unsigned int m_diag_nopts_pop_count;
     bool         m_diag_pcr_noseen;

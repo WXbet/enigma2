@@ -395,6 +395,7 @@ eAlsaOutput::eAlsaOutput(const char *device_name)
     , m_pcr_demux_fd(-1)
     , m_pcr_demux_adapter(-1)
     , m_pcr_demux_idx(-1)
+    , m_post_flush_preroll_pending(0)
     , m_diag_sleep_count(0)
     , m_diag_nopts_pop_count(0)
     , m_diag_pcr_noseen(false)
@@ -505,6 +506,12 @@ void eAlsaOutput::flushOnSeek()
     pthread_mutex_lock(&m_state_mutex);
     m_fifo->flush();
     m_calced_apts = -1;   /* re-anchor on next chunk (new chunk_pts reference) */
+    /* Preroll guard: the writer thread will hold off consuming until the
+     * FIFO has buffered ~1.2s of audio (30 slots). That ensures chunk-PTS
+     * and PCR have settled before the anchor block reads them — first
+     * anchor lands on stable values, pcr_offset is correct from the start.
+     * Cleared automatically by thread() once the anchor has been written. */
+    m_post_flush_preroll_pending = 1;
     /* DO NOT reset m_pcr_offset_computed.
      * pcr_offset is a pipeline-latency constant — set once at first anchor
      * and never re-computed. Resetting on seek causes the next anchor to
@@ -593,6 +600,31 @@ void eAlsaOutput::thread()
         m_fifo->resume();
 
         while (!m_stop && m_handle) {
+            /* Post-flush FIFO preroll: after flushOnSeek wait until the
+             * FIFO has buffered ~30 slots (~1.2s of audio) before consuming.
+             * This lets chunk-PTS and PCR settle so the next anchor lands
+             * on stable values. Cap at 3s in case data never comes.
+             * Cleared the moment the producer has filled enough.
+             *
+             * Only active if m_post_flush_preroll_pending was set by
+             * flushOnSeek — initial service start path skips this so audio
+             * starts immediately on zap. */
+            if (m_post_flush_preroll_pending) {
+                static int s_preroll_waited_ms = 0;
+                uint32_t fill = m_fifo ? m_fifo->fill() : 0;
+                if (fill >= 30 || s_preroll_waited_ms >= 3000) {
+                    if (s_preroll_waited_ms > 0)
+                        eDebug("[eAlsaOutput] post-flush preroll done: fifo=%u waited=%dms",
+                               fill, s_preroll_waited_ms);
+                    m_post_flush_preroll_pending = 0;
+                    s_preroll_waited_ms = 0;
+                } else {
+                    usleep(20 * 1000);
+                    s_preroll_waited_ms += 20;
+                    continue;
+                }
+            }
+
             int64_t slot_pts = AV_NOPTS_VALUE;
             int n = m_fifo->get(slot_buf, sizeof(slot_buf), &slot_pts);
             if (n <= 0) continue;
