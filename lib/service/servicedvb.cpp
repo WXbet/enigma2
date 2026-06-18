@@ -1835,7 +1835,16 @@ RESULT eDVBServicePlay::setFastForward_internal(int ratio, bool final_seek)
 	if (ratio > 8)
 	{
 		skipmode = ratio;
+#ifdef DREAMNEXTGEN
+		/* Combine HW FF(8) with skipmode FF(>8) so the AML decoder keeps
+		 * producing visible frames between file-cursor skips. Stock E2 uses
+		 * ffratio=1 (= VIDEO_FAST_FORWARD(1), trick I-frame only) which on
+		 * dreamone shows essentially no frames at all because between the
+		 * 16+s file skips the decoder rarely sees an I-frame. */
+		ffratio = 8;
+#else
 		ffratio = 1;
+#endif
 	} else if (ratio > 0)
 	{
 		skipmode = 0;
@@ -1847,7 +1856,11 @@ RESULT eDVBServicePlay::setFastForward_internal(int ratio, bool final_seek)
 	} else // if (ratio < 0)
 	{
 		skipmode = ratio;
+#ifdef DREAMNEXTGEN
+		ffratio = 8;
+#else
 		ffratio = 1;
+#endif
 	}
 
 	if (m_skipmode != skipmode)
