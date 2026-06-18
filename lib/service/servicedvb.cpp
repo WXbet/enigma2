@@ -1828,19 +1828,7 @@ RESULT eDVBServicePlay::setFastForward_internal(int ratio, bool final_seek)
 	int skipmode, ffratio, ret = 0;
 	pts_t pos=0;
 
-#ifdef DREAMNEXTGEN
-	/* AML VIDEO_FAST_FORWARD ioctl reaches the kernel (visible in dmesg) but
-	 * the freerun-mode video pacer ignores the multiplier — FF 2/4/8 all play
-	 * at the same "as-fast-as-decoder-can" speed. Also decoder.getPTS during
-	 * HW FF returns 0 → position display gets bogus 33-bit-underflow values
-	 * ("Fantasiezahlen in Zeitleiste"). Route every |ratio| > 1 through
-	 * trickmode (skipmode-based iframe step) so the speed matches the
-	 * requested ratio and position stays correct. */
-	const int HW_FF_THRESHOLD = 1;
-#else
-	const int HW_FF_THRESHOLD = 8;
-#endif
-	if (ratio > HW_FF_THRESHOLD)
+	if (ratio > 8)
 	{
 		skipmode = ratio;
 		ffratio = 1;
