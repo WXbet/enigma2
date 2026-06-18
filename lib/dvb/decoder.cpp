@@ -1649,6 +1649,17 @@ int eTSMPEGDecoder::setState()
 			 * decoder_set_trickmode actually displays the trick output. */
 			if (m_state == stateDecoderFastForward && s[2] > 0)
 				m_video->dnxtPostFastForward();
+			/* HW FF→play: kernel decoder gets stuck in half-trickmode state
+			 * (skip count not fully reset, frame queue holds stale skipped
+			 * I-frames). Symptom: distorted still pictures + artefacts after
+			 * play. Force a full pipeline restart with DMX_STOP+CLEAR+START
+			 * AFTER FF(0)+CONTINUE. flushPVR (called from seekTo) has already
+			 * completed by this point so no race. */
+			if (m_state == statePlay
+				&& s_dnxt_prev_state == stateDecoderFastForward) {
+				eDebug("[eTSMPEGDecoder] HW FF→play recovery: post-FF(0) DMX+CLEAR+START");
+				m_video->dnxtPostFastForward();
+			}
 #endif
 		}
 #ifdef DREAMNEXTGEN
