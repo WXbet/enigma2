@@ -608,17 +608,8 @@ void eAlsaOutput::thread()
                 continue;
             }
 
-            /* Preroll-wait:
-             * Phase A — hold first slot until pcr catches up to slot_pts
-             *           (handles normal first-zap / livetv start).
-             * Phase B — additionally wait until the video decoder has
-             *           drained stale trick-mode frames, i.e. pts_video is
-             *           within ~250ms of pcr. After FF→play the decoder
-             *           takes ~500-1000ms to start producing current
-             *           frames; anchoring during this transient pins
-             *           pcr_offset to a stale reference and causes a 5s
-             *           av-drift convergence period.
-             * Cap at 5s in case pcr is stuck or vpts never converges. */
+            /* Preroll-wait: hold first slot until pcr catches up to slot_pts.
+             * Cap at 2s in case pcr is stuck (wrong demux fd, no data). */
             if (m_calced_apts == -1 && !m_passthrough && slot_pts != AV_NOPTS_VALUE) {
                 int64_t pcr = readPcrScr();
                 if (pcr == AV_NOPTS_VALUE && !m_diag_pcr_noseen) {
@@ -630,10 +621,13 @@ void eAlsaOutput::thread()
                     ? (int32_t)((uint32_t)slot_pts - (uint32_t)pcr) / 90 : 0;
                 int waited_ms = 0;
                 int64_t initial_pcr = pcr;
-                /* Phase A — slot_pts → pcr */
+                /* Extended to 5s + every-iteration logging so we can see
+                 * whether pcrscr is advancing or frozen after HW FF→play
+                 * (FF(8)+ symptom: pcr_off clamps to 0 because delta stays
+                 * negative for the full timeout). */
                 while (pcr != AV_NOPTS_VALUE && check > 5 && check < 5000 &&
                        waited_ms < 5000 && !m_stop) {
-                    eDebug("[eAlsaOutput] DIAG preroll-wait A slot_pts=0x%llx pcr=0x%llx check=%+dms waited=%dms pcr_adv=%+dms",
+                    eDebug("[eAlsaOutput] DIAG preroll-wait slot_pts=0x%llx pcr=0x%llx check=%+dms waited=%dms pcr_advance=%+dms",
                            (long long)slot_pts, (long long)pcr, check, waited_ms,
                            (int32_t)((uint32_t)pcr - (uint32_t)initial_pcr) / 90);
                     usleep(50 * 1000);
@@ -642,32 +636,8 @@ void eAlsaOutput::thread()
                     if (pcr == AV_NOPTS_VALUE) break;
                     check = (int32_t)((uint32_t)slot_pts - (uint32_t)pcr) / 90;
                 }
-                /* Phase B — video stability. After FF→play the kernel
-                 * decoder may still be churning through trick-state frames
-                 * (vpts far ahead of pcr). Wait until vpts is within 250ms
-                 * of pcr OR 800ms cap (whichever first). Skipped if vpts
-                 * is already valid and close, or if pcr could not be read. */
-                if (pcr != AV_NOPTS_VALUE) {
-                    int phaseB = 0;
-                    int64_t vpts = readTsyncFile("/sys/class/tsync/pts_video");
-                    int32_t vpcr = (vpts != AV_NOPTS_VALUE && vpts != 0)
-                        ? (int32_t)((uint32_t)vpts - (uint32_t)pcr) / 90 : 99999;
-                    while ((vpts == AV_NOPTS_VALUE || vpts == 0 || vpcr < -250 || vpcr > 250)
-                           && phaseB < 800 && !m_stop) {
-                        eDebug("[eAlsaOutput] DIAG preroll-wait B pcr=0x%llx vpts=0x%llx vpcr=%+dms waited=%dms",
-                               (long long)pcr, (long long)vpts, vpcr, phaseB);
-                        usleep(100 * 1000);
-                        phaseB += 100;
-                        pcr = readPcrScr();
-                        if (pcr == AV_NOPTS_VALUE) break;
-                        vpts = readTsyncFile("/sys/class/tsync/pts_video");
-                        vpcr = (vpts != AV_NOPTS_VALUE && vpts != 0)
-                            ? (int32_t)((uint32_t)vpts - (uint32_t)pcr) / 90 : 99999;
-                    }
-                    waited_ms += phaseB;
-                }
                 if (waited_ms > 0) {
-                    eDebug("[eAlsaOutput] DIAG preroll-wait DONE slot_pts=0x%llx pcr=0x%llx check=%+dms waited=%dms pcr_adv=%+dms",
+                    eDebug("[eAlsaOutput] DIAG preroll-wait DONE slot_pts=0x%llx pcr=0x%llx check=%+dms waited=%dms pcr_advance=%+dms",
                            (long long)slot_pts, (long long)pcr, check, waited_ms,
                            (int32_t)((uint32_t)pcr - (uint32_t)initial_pcr) / 90);
                 }
