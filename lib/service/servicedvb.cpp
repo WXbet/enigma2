@@ -3664,6 +3664,23 @@ void eDVBServicePlay::switchToTimeshift()
 	eDebug("[eDVBServicePlay] switchToTimeshift, in pause mode now.");
 	pause();
 	updateDecoder(true); /* mainly to switch off PCR, and to set pause */
+
+#ifdef DREAMNEXTGEN
+	/* Force eAlsaOutput's PCR-tracking demux fd to the timeshift demux.
+	 * Without this it keeps DMX_GET_STC on the now-paused live demux →
+	 * frozen STC vs audio chunks in live-PTS from the timeshift file →
+	 * 7+s delta at anchor → pcr_offset clamps to 0 → audio runs ahead
+	 * of video permanently. decoder.cpp setState would normally do this
+	 * via setPcrDemux, but its video_unchanged check sees identical
+	 * vpid/pcr-pid/demux-ID across the live → timeshift switch and
+	 * short-circuits. */
+	if (m_decode_demux) {
+		uint8_t did = 0;
+		m_decode_demux->getCADemuxID(did);
+		eAlsaOutput::instance()->setPcrDemux(0, did);
+		eDebug("[eDVBServicePlay] timeshift entry: PCR via adapter0/demux%d", did);
+	}
+#endif
 }
 
 void eDVBServicePlay::updateDecoder(bool sendSeekableStateChanged)
