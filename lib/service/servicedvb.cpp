@@ -1108,6 +1108,7 @@ eDVBServicePlay::eDVBServicePlay(const eServiceReference &ref, eDVBService *serv
 	m_slowmotion(0),
 #ifdef DREAMNEXTGEN
 	m_pos_before_skipmode(0),
+	m_skipmode_entry_ms(0),
 #endif
 	m_tap_recorder(0),
 	m_cuesheet_changed(0),
@@ -1853,14 +1854,30 @@ RESULT eDVBServicePlay::setFastForward_internal(int ratio, bool final_seek)
 	{
 		eDebug("[eDVBServicePlay] setFastForward setting cue skipmode to %d", skipmode);
 #ifdef DREAMNEXTGEN
-		/* Snapshot current position when entering skipmode trickmode (FF>=16).
-		 * During trickmode getPlayPosition would read garbage audio PTS from
-		 * skipped-ahead PES; we return this captured value instead. */
-		if (m_skipmode == 0 && skipmode != 0) {
+		/* Snapshot current position + wallclock when entering OR changing
+		 * skipmode (FF>=16 — also rate changes 16→32). getPlayPosition
+		 * estimates progress as entry_pos + elapsed*rate while skipmode is
+		 * active, so UI position advances correctly and seekTo at exit
+		 * lands at the right spot without reading garbage audio PTS. */
+		if (skipmode != 0) {
 			pts_t cur = 0;
-			if (getPlayPosition(cur) >= 0 && cur > 0)
+			/* m_skipmode is still the OLD value here. If we were already in
+			 * skipmode use the running estimate as the new anchor; if not,
+			 * read the live position. */
+			if (m_skipmode != 0 && m_pos_before_skipmode > 0) {
+				struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+				int64_t now_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+				int64_t elapsed_ms = now_ms - m_skipmode_entry_ms;
+				cur = m_pos_before_skipmode + (pts_t)elapsed_ms * 90 * m_skipmode;
+			} else {
+				getPlayPosition(cur);
+			}
+			if (cur > 0) {
 				m_pos_before_skipmode = cur;
-			eDebug("[eDVBServicePlay] skipmode entry: captured pos=%lld", m_pos_before_skipmode);
+				struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+				m_skipmode_entry_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+				eDebug("[eDVBServicePlay] skipmode anchor: pos=%lld rate=%d", m_pos_before_skipmode, skipmode);
+			}
 		}
 #endif
 		if (m_cue)
@@ -2087,10 +2104,24 @@ RESULT eDVBServicePlay::getPlayPosition(pts_t &pos)
 	/* During skipmode trickmode (FF>=16) the cue runs the file cursor far
 	 * ahead. Reading audio PTS from the decoder returns garbage values
 	 * (frequently past file-end → 23h pts), which then make seekTo at
-	 * trickmode→play jump out of bounds and trigger EOF action. Return
-	 * the frozen position captured at trickmode entry. */
-	if (m_skipmode != 0 && m_pos_before_skipmode > 0) {
-		pos = m_pos_before_skipmode;
+	 * trickmode→play jump out of bounds and trigger EOF action.
+	 * Estimate position as entry_pos + elapsed_wallclock_ms * 90 * skipmode_rate
+	 * so the UI fortschritt animates and seekTo at exit lands at the actual
+	 * vorgespulte position. Clamp to movie length to avoid running off the end. */
+	if (m_skipmode != 0 && m_pos_before_skipmode > 0 && m_skipmode_entry_ms > 0) {
+		struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+		int64_t now_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+		int64_t elapsed_ms = now_ms - m_skipmode_entry_ms;
+		pts_t advance = (pts_t)elapsed_ms * 90 * m_skipmode;  /* 90khz pts/ms * rate (signed for rewind) */
+		pos = m_pos_before_skipmode + advance;
+		if (pos < 0) pos = 0;
+		/* clamp to length-1s so EOF action does not trigger immediately */
+		pts_t len = 0;
+		ePtr<iDVBPVRChannel> pvr;
+		if (m_service_handler.getPVRChannel(pvr) == 0 && pvr->getLength(len) == 0 && len > 90000) {
+			pts_t cap = len - 90000;
+			if (pos > cap) pos = cap;
+		}
 		return 0;
 	}
 #endif
