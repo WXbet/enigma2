@@ -1614,18 +1614,21 @@ int eTSMPEGDecoder::setState()
 			};
 		int *s = state_table[m_state];
 #ifdef DREAMNEXTGEN
-		/* Detect transition trick/FF/slowmotion → play. The AML video pacer
-		 * gets stuck on the last decoded iframe after trickmode unless we
+		/* Detect transition trickmode/slowmotion → play. The AML video pacer
+		 * gets stuck on the last decoded iframe after those modes unless we
 		 * issue an explicit VIDEO_FREEZE→VIDEO_PLAY pair to flush its
-		 * pipeline state. Verified from DreamOS strace (FF→OK return-to-play
-		 * always does FREEZE+PLAY before FAST_FORWARD(0)+CONTINUE). LiveTV
-		 * never enters trick/FF/slowmotion so this never fires on those
-		 * paths — safe to add unconditionally under DREAMNEXTGEN. */
+		 * pipeline state.
+		 *
+		 * NOTE: explicitly NOT triggered for stateDecoderFastForward →
+		 * statePlay. DreamOS strace shows that transition is just plain
+		 * VIDEO_FAST_FORWARD(0) + VIDEO_CONTINUE (which the regular
+		 * setFastForward + unfreeze below already does). Adding FREEZE+PLAY
+		 * on top corrupts the decoder state right after the FF-tail's
+		 * VIDEO_CLEAR_BUFFER reset, causing visible video stutter/artefacts. */
 		static int s_dnxt_prev_state = stateStop;
 		bool dnxt_recovery = m_video
 			&& m_state == statePlay
-			&& (s_dnxt_prev_state == stateDecoderFastForward
-				|| s_dnxt_prev_state == stateTrickmode
+			&& (s_dnxt_prev_state == stateTrickmode
 				|| s_dnxt_prev_state == stateSlowMotion);
 		if (dnxt_recovery) {
 			eDebug("[eTSMPEGDecoder] DreamOS recovery dance: prev=%d → statePlay",
