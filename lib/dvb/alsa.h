@@ -87,6 +87,12 @@ protected:
     int     m_pcr_demux_idx;
     int64_t readPcrScr() const;
 
+    /* Post-event re-anchor window: while monotonic_now < this, the periodic
+     * re-anchor in thread() uses 5s instead of 30s so AV drift after a
+     * pipeline disturbance (seek, FF→play, timeshift switch, EPIPE) converges
+     * within ~5s instead of ~30s. */
+    int64_t m_post_event_until_ms;
+
     unsigned int m_diag_sleep_count;
     unsigned int m_diag_nopts_pop_count;
     bool         m_diag_pcr_noseen;

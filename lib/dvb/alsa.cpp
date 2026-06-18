@@ -395,6 +395,7 @@ eAlsaOutput::eAlsaOutput(const char *device_name)
     , m_pcr_demux_fd(-1)
     , m_pcr_demux_adapter(-1)
     , m_pcr_demux_idx(-1)
+    , m_post_event_until_ms(0)
     , m_diag_sleep_count(0)
     , m_diag_nopts_pop_count(0)
     , m_diag_pcr_noseen(false)
@@ -513,6 +514,11 @@ void eAlsaOutput::flushOnSeek()
      * to 500-1000ms → apcr stuck permanently. DreamOS strace confirms:
      * /proc/stb/pcr_offset is written ONCE at service start and one
      * adaptive bump much later, NEVER on seek. */
+    /* Open the post-event window so periodic re-anchor in thread() runs
+     * at 5s instead of 30s — catches initial transient drift after
+     * seek / FF→play / timeshift switch and converges av in ~5s. */
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    m_post_event_until_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000 + 30000;
     pthread_mutex_unlock(&m_state_mutex);
     eDebug("[eAlsaOutput] flushOnSeek: FIFO cleared, anchor re-armed (pcr_offset preserved)");
     /* DO NOT call enableKernelSync — DreamOS never touches tsync/* on seek.
@@ -751,10 +757,13 @@ void eAlsaOutput::thread()
                                m_fifo->fill());
                         s_last_log = now_ms;
 
-                        /* Adaptive periodic re-anchor: 5s in post-recovery
-                         * window, 30s steady-state. Only fires if |drift|>100ms. */
-                        int64_t periodic_threshold = (s_post_recovery_until_ms != 0 && now_ms < s_post_recovery_until_ms)
-                                                     ? 5000 : PERIODIC_REANCHOR_MS;
+                        /* Adaptive periodic re-anchor: 5s in post-recovery /
+                         * post-seek window, 30s steady-state. Only fires if
+                         * |drift|>100ms. m_post_event_until_ms is set by
+                         * flushOnSeek and by the EPIPE-recovery branch below. */
+                        bool in_window = (s_post_recovery_until_ms != 0 && now_ms < s_post_recovery_until_ms)
+                                      || (m_post_event_until_ms      != 0 && now_ms < m_post_event_until_ms);
+                        int64_t periodic_threshold = in_window ? 5000 : PERIODIC_REANCHOR_MS;
                         if (s_anchor_log_ms != 0 && (now_ms - s_anchor_log_ms) >= periodic_threshold) {
                             int32_t abs_apcr = apcr_ms < 0 ? -apcr_ms : apcr_ms;
                             if (abs_apcr > 100) {
