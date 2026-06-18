@@ -3680,18 +3680,22 @@ void eDVBServicePlay::switchToTimeshift()
 
 #ifdef DREAMNEXTGEN
 	/* Force eAlsaOutput's PCR-tracking demux fd to the timeshift demux.
-	 * Without this it keeps DMX_GET_STC on the now-paused live demux →
+	 * Without this it keeps DMX_GET_STC on the now-paused live demux fd →
 	 * frozen STC vs audio chunks in live-PTS from the timeshift file →
-	 * 7+s delta at anchor → pcr_offset clamps to 0 → audio runs ahead
-	 * of video permanently. decoder.cpp setState would normally do this
-	 * via setPcrDemux, but its video_unchanged check sees identical
-	 * vpid/pcr-pid/demux-ID across the live → timeshift switch and
-	 * short-circuits. */
+	 * huge delta at anchor → pcr_offset clamps to 0 → audio runs ahead
+	 * of video permanently.
+	 *
+	 * IMPORTANT: the live demux ID and the timeshift demux ID are often
+	 * IDENTICAL (e.g. both 16) because the timeshift handler reuses the
+	 * same demux slot. setPcrDemux's same-id early-return must be defeated
+	 * by closing first (idx=-1) then re-opening — the timeshift handler
+	 * has a different fd / data source on that demux slot. */
 	if (m_decode_demux) {
 		uint8_t did = 0;
 		m_decode_demux->getCADemuxID(did);
-		eAlsaOutput::instance()->setPcrDemux(0, did);
-		eDebug("[eDVBServicePlay] timeshift entry: PCR via adapter0/demux%d", did);
+		eAlsaOutput::instance()->setPcrDemux(0, -1);   /* force close cached fd */
+		eAlsaOutput::instance()->setPcrDemux(0, did);  /* re-open on timeshift demux */
+		eDebug("[eDVBServicePlay] timeshift entry: re-opened PCR fd on adapter0/demux%d", did);
 	}
 #endif
 }
