@@ -1930,7 +1930,7 @@ RESULT eDVBServicePlay::getLength(pts_t &len)
 RESULT eDVBServicePlay::pause()
 {
 	eDebug("[eDVBServicePlay] pause");
-	setFastForward_internal(0, m_slowmotion || m_fastforward > 1);
+	setFastForward_internal(0, m_slowmotion || m_fastforward > 1 || m_skipmode != 0);
 	// Check SoftDecoder first (only if session is active AND not in timeshift playback)
 	// During timeshift playback, we use the normal decoder for the timeshift file
 	if (m_soft_decoder && m_csa_session && m_csa_session->isActive() && !m_timeshift_active)
@@ -1953,7 +1953,7 @@ RESULT eDVBServicePlay::pause()
 RESULT eDVBServicePlay::unpause()
 {
 	eDebug("[eDVBServicePlay] unpause");
-	setFastForward_internal(0, m_slowmotion || m_fastforward > 1);
+	setFastForward_internal(0, m_slowmotion || m_fastforward > 1 || m_skipmode != 0);
 	// Check SoftDecoder first (only if session is active AND not in timeshift playback)
 	// During timeshift playback, we use the normal decoder for the timeshift file
 	if (m_soft_decoder && m_csa_session && m_csa_session->isActive() && !m_timeshift_active)
