@@ -1877,13 +1877,23 @@ RESULT eDVBServicePlay::setFastForward_internal(int ratio, bool final_seek)
 		}
 	}
 
-	m_skipmode = skipmode;
-
 	if (final_seek)
 	{
+		/* IMPORTANT: read position BEFORE updating m_skipmode below.
+		 * getPlayPosition uses m_skipmode != 0 to return the frozen
+		 * pre-trickmode position; once we reset m_skipmode to 0 below it
+		 * would fall back to the garbage live audio PTS. */
 		RESULT r = getPlayPosition(pos);
 		eDebug("[eDVBServicePlay] setFastForward trickplay stopped .. ret %d, pos %lld", r, pos);
 	}
+
+	m_skipmode = skipmode;
+#ifdef DREAMNEXTGEN
+	/* Skipmode fully exited — clear the frozen anchor so future getPlayPosition
+	 * reads return live PTS again. */
+	if (skipmode == 0)
+		m_pos_before_skipmode = 0;
+#endif
 
 	m_fastforward = ffratio;
 
