@@ -1645,6 +1645,16 @@ int eTSMPEGDecoder::setState()
 			if (m_audio) m_audio->unfreeze();  // AUDIO_CONTINUE
 		}
 #endif
+#ifdef DREAMNEXTGEN
+		/* DreamOS strace pattern for FF→play (FF(8)→play):
+		 *   DMX_STOP → VIDEO_CLEAR_BUFFER → DMX_START → FF(0) → CONTINUE
+		 * i.e. the demux/decoder flush happens BEFORE FF(0). Without this
+		 * the kernel decoder is still in trick mode when FF(0) hits and
+		 * produces visible video corruption (stutter, freeze, artefacts). */
+		if (m_video && m_state == statePlay
+			&& s_dnxt_prev_state == stateDecoderFastForward)
+			m_video->dnxtPostFastForward();
+#endif
 		if (changed & (changeState|changeVideo) && m_video)
 		{
 			m_video->setSlowMotion(s[1]);
