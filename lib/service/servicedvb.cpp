@@ -1985,12 +1985,22 @@ RESULT eDVBServicePlay::pause()
 {
 	eDebug("[eDVBServicePlay] pause");
 #ifdef DREAMNEXTGEN
-	/* User PVR/Timeshift pause: hold the ALSA writer BEFORE the decoder
-	 * freezes its kernel state. snd_pcm_drain blocks ~170 ms — this is the
-	 * audible audio tail, after which the writer waits on its condvar and
-	 * FIFO content is preserved untouched. Without this, the writer keeps
-	 * consuming the FIFO during pause; on resume the FIFO head's PTS no
-	 * longer matches the (frozen) STC → seconds of audio drift. */
+	/* DreamNextGen user PVR/Timeshift pause ordering (verified empirically
+	 * 2026-06-19 — STC drifts at ~94% real-time during pause unless the
+	 * source feed is stopped, despite AMSTREAM_VPAUSE + DMX_STOP on the
+	 * PCR filter):
+	 *   1. Pause PVR filepush thread — no new TS to kernel demux, so the
+	 *      kernel PCR engine has nothing to parse and pts_pcrscr truly
+	 *      stops advancing.
+	 *   2. Hold ALSA writer + drain HW buffer — ~170 ms audible tail then
+	 *      writer holds, FIFO content preserved for clean resume.
+	 *   3. m_decoder->pause() fires AMSTREAM_VPAUSE + DMX_STOP via setState. */
+	{
+		ePtr<iDVBPVRChannel> pvr;
+		if ((m_timeshift_active ? m_service_handler_timeshift : m_service_handler)
+				.getPVRChannel(pvr) == 0 && pvr)
+			pvr->setSourcePause(true);
+	}
 	if (eAlsaOutput *a = eAlsaOutput::instance(nullptr))
 		a->pauseWriter();
 #endif
@@ -2024,10 +2034,16 @@ RESULT eDVBServicePlay::unpause()
 {
 	eDebug("[eDVBServicePlay] unpause");
 #ifdef DREAMNEXTGEN
-	/* Wake the ALSA writer AFTER the decoder kernel state has resumed
-	 * (STC unfrozen by AMSTREAM_VPAUSE(0)) so the first writei after
-	 * snd_pcm_prepare lines up with the resumed STC. The EBADFD handler
-	 * in the writer thread takes care of state SETUP → PREPARED. */
+	/* Reverse of pause: resume PVR filepush first (TS flows again, kernel
+	 * STC will catch up to current PCR), then m_decoder->play() unfreezes
+	 * AMSTREAM_VPAUSE and re-enables PCR demux, then resumeWriter wakes
+	 * the ALSA writer. */
+	{
+		ePtr<iDVBPVRChannel> pvr;
+		if ((m_timeshift_active ? m_service_handler_timeshift : m_service_handler)
+				.getPVRChannel(pvr) == 0 && pvr)
+			pvr->setSourcePause(false);
+	}
 #endif
 	setFastForward_internal(0, m_slowmotion || m_fastforward > 1 || m_skipmode != 0);
 	// Check SoftDecoder first (only if session is active AND not in timeshift playback)

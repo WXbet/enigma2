@@ -267,7 +267,12 @@ void eFilePushThread::thread()
 					current_span_remaining -= buf_end;
 			}
 		}
-		sendEvent(evtStopped);
+		/* m_stop == 2 = pause request (not real stop). Do NOT fire
+		 * evtStopped or the UI will interpret it as PVR ended and exit
+		 * the timeshift session. m_stop == 1 is a real stop and still
+		 * sends the event normally. */
+		if (m_stop != 2)
+			sendEvent(evtStopped);
 
 		{ /* mutex lock scope */
 			eSingleLocker lock(m_run_mutex);
@@ -334,6 +339,26 @@ void eFilePushThread::pause()
 	while (m_run_state)
 	{
 		eDebug("[eFilePushThread] waiting for pause");
+		m_run_cond.wait(m_run_mutex);
+	}
+}
+
+void eFilePushThread::pauseSoft()
+{
+	if (m_stop == 1)
+	{
+		eWarning("[eFilePushThread] pauseSoft called while not running");
+		return;
+	}
+	/* Identical to pause() but without SIGUSR1. The reader thread will
+	 * finish its current read iteration (microseconds for file pread),
+	 * see m_stop=2 at the loop top, break out and park on m_run_cond. */
+	eSingleLocker lock(m_run_mutex);
+	m_stop = 2;
+	m_run_cond.signal();
+	while (m_run_state)
+	{
+		eDebug("[eFilePushThread] waiting for pauseSoft");
 		m_run_cond.wait(m_run_mutex);
 	}
 }
