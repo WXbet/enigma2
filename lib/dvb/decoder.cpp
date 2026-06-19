@@ -1676,72 +1676,19 @@ int eTSMPEGDecoder::setState()
 #endif
 		}
 #ifdef DREAMNEXTGEN
-		/* User PVR/Timeshift pause/unpause — DreamOS-aligned sequence
-		 * (verified via strace2-timeshift.log + kernel source review).
-		 *
-		 * DreamOS PAUSE:                       Our PAUSE:
-		 *   1. /proc/stb/pcr_offset write      [skipped — already set once at start]
-		 *   2. SET_DEMUX_INFO                  [skipped — empirically deadlocks our kernel
-		 *                                       when run on a running engine]
-		 *   3. DMX_STOP on PCR filter      →   m_pcr->stop()
-		 *   4. VIDEO_FREEZE                →   AMSTREAM_IOC_VPAUSE(1) on /dev/amvideo
-		 *                                      (DVB VIDEO_FREEZE has no amlogic
-		 *                                      handler — AMSTREAM_VPAUSE is the only
-		 *                                      userspace ioctl reaching
-		 *                                      timestamp_pcrscr_enable(0) → vsync ISR
-		 *                                      stops incrementing pts_pcrscr →
-		 *                                      kernel STC frozen at current value)
-		 *   5. ALSA DRAIN                      [openatv default path handles audio]
-		 *
-		 * DreamOS UNPAUSE:                     Our UNPAUSE:
-		 *   1. open /dev/tsync                 [ephemeral inside setDemuxInfo()]
-		 *   2. SET_DEMUX_INFO              →   eAVSyncCore::setDemuxInfo()
-		 *   3. DMX_SET_PES_FILTER          →   m_pcr->start() (DMX_START)
-		 *   4. ALSA PLAY                   →   AMSTREAM_IOC_VPAUSE(0) (resumes STC)
-		 *
-		 * GATED on m_user_pause_active: only true PVR/Timeshift user-pause
-		 * triggers this path. Internal pause→play cycles (eDVBSoftDecoder
-		 * stream-stall recovery, trick/FF handover) leave the flag false
-		 * and skip the kernel-level sequence — they previously caused
-		 * ~228 ms av-sync drift per cycle which compounded across SoftCSA
-		 * cold-start recovery loops.
-		 *
-		 * _A_M='S', _IOW('S', 0x17, int) = 0x40045317. */
-		if (m_user_pause_active) {
-			bool to_pause = (s_dnxt_prev_state != statePause) && (m_state == statePause);
-			bool to_play  = (s_dnxt_prev_state == statePause) && (m_state == statePlay);
-			auto aml_vpause = [](int arg) {
-				int fd = ::open("/dev/amvideo", O_RDWR | O_CLOEXEC);
-				if (fd < 0) {
-					eDebug("[eTSMPEGDecoder] /dev/amvideo open failed: %m");
-					return;
-				}
-				if (::ioctl(fd, 0x40045317, arg) < 0)
-					eDebug("[eTSMPEGDecoder] AMSTREAM_VPAUSE(%d) failed: %m", arg);
-				::close(fd);
-			};
-			if (to_pause) {
-				/* AMSTREAM_VPAUSE(1) alone freezes STC via vsync ISR disable —
-				 * kernel pcr engine keeps running but vsync no longer
-				 * increments pts_pcrscr. DMX_STOP prevents new PCR packets
-				 * being fed to the engine. NO STOP_TSYNC_PCR: that calls
-				 * timestamp_pcrscr_set(0) which would force a STC re-init
-				 * at unpause and introduce +600-800ms drift (kernel re-anchors
-				 * to current demux PCR which crept during pause). DreamOS
-				 * strace confirms: no STOP_TSYNC_PCR, just freeze STC and
-				 * resume from frozen value. */
-				aml_vpause(1);
-				if (m_pcr) m_pcr->stop();
-				eDebug("[eTSMPEGDecoder] DreamNextGen user-pause: AMSTREAM_VPAUSE(1)+DMX_STOP");
-			} else if (to_play) {
-				/* Mirror of pause: just resume vsync increment + restart PCR
-				 * filter. STC continues from the frozen value (kernel engine
-				 * was never stopped, just held by VPAUSE). NO SET_DEMUX_INFO
-				 * because that runs pts_start which re-inits STC from the
-				 * (crept) demux PCR — source of the residual drift. */
-				if (m_pcr) m_pcr->start();
-				aml_vpause(0);
-				eDebug("[eTSMPEGDecoder] DreamNextGen user-unpause: DMX_START+AMSTREAM_VPAUSE(0)");
+		/* DreamOS-style PVR/Timeshift pause: DMX_STOP on PCR demux filter.
+		 * Default path already handles VIDEO_FREEZE (m_video->freeze) and
+		 * AUDIO_PAUSE (m_audio->freeze); ALSA drain is in pauseWriter.
+		 * DMX_STOP halts the PCR feed to kernel pcrmaster → STC freezes
+		 * at the current value. Unpause = DMX_START on PCR. No tsync
+		 * ioctls (per live strace verification of DreamOS pause flow). */
+		if (m_user_pause_active && m_pcr) {
+			if ((s_dnxt_prev_state != statePause) && (m_state == statePause)) {
+				m_pcr->stop();
+				eDebug("[eTSMPEGDecoder] DreamOS pause: DMX_STOP PCR demux");
+			} else if ((s_dnxt_prev_state == statePause) && (m_state == statePlay)) {
+				m_pcr->start();
+				eDebug("[eTSMPEGDecoder] DreamOS unpause: DMX_START PCR demux");
 			}
 		}
 		s_dnxt_prev_state = m_state;

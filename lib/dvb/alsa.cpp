@@ -766,11 +766,14 @@ void eAlsaOutput::thread()
                     }
                 } else if (got == -EBADFD) {
                     /* PCM in SETUP state after our snd_pcm_drain at pause.
-                     * Clean transition — chunks in FIFO are the same ones we
-                     * paused on, still in sync with the (also-frozen) STC, so
-                     * skip the m_calced_apts=-1 below to keep the anchor. */
+                     * DreamOS-style resume: force re-anchor on first new
+                     * FIFO chunk. Matches thread.asm last_apts=-1 path
+                     * (78d33c) where PLAY_REQ entry reseeds the anchor
+                     * against current STC instead of carrying pre-pause
+                     * accounting forward. */
                     snd_pcm_prepare(m_handle);
-                    eDebug("[eAlsaOutput] writei EBADFD (post-pause), prepared");
+                    eDebug("[eAlsaOutput] writei EBADFD (post-pause), prepared, re-anchor");
+                    m_calced_apts = -1;
                     continue;
                 } else if (got == -EIO) {
                     eDebug("[eAlsaOutput] writei EIO reopen ALSA");
