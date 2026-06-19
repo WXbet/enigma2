@@ -1721,27 +1721,27 @@ int eTSMPEGDecoder::setState()
 				::close(fd);
 			};
 			if (to_pause) {
+				/* AMSTREAM_VPAUSE(1) alone freezes STC via vsync ISR disable —
+				 * kernel pcr engine keeps running but vsync no longer
+				 * increments pts_pcrscr. DMX_STOP prevents new PCR packets
+				 * being fed to the engine. NO STOP_TSYNC_PCR: that calls
+				 * timestamp_pcrscr_set(0) which would force a STC re-init
+				 * at unpause and introduce +600-800ms drift (kernel re-anchors
+				 * to current demux PCR which crept during pause). DreamOS
+				 * strace confirms: no STOP_TSYNC_PCR, just freeze STC and
+				 * resume from frozen value. */
 				aml_vpause(1);
 				if (m_pcr) m_pcr->stop();
-				/* STOP_TSYNC_PCR mirrors SET_DEMUX_INFO at unpause: kernel
-				 * pts_stop(VIDEO) + tsync_pcr_stop() so the engine's
-				 * tsync_pcr_started flag is cleared. Without this, the
-				 * SET_DEMUX_INFO at unpause runs pts_start on an already-
-				 * started engine → kernel mutex deadlock → box hang. */
-				eAVSyncCore::getInstance()->stopPCRSync();
-				eDebug("[eTSMPEGDecoder] DreamNextGen user-pause: AMSTREAM_VPAUSE(1)+DMX_STOP+STOP_TSYNC_PCR");
+				eDebug("[eTSMPEGDecoder] DreamNextGen user-pause: AMSTREAM_VPAUSE(1)+DMX_STOP");
 			} else if (to_play) {
-				if (m_demux) {
-					uint8_t did = 0;
-					m_demux->getCADemuxID(did);
-					int v = (m_vpid   > 0 && m_vpid   < 0x1FFF) ? m_vpid   : 0x1FFF;
-					int a = (m_apid   > 0 && m_apid   < 0x1FFF) ? m_apid   : 0x1FFF;
-					int p = (m_pcrpid > 0 && m_pcrpid < 0x1FFF) ? m_pcrpid : 0x1FFF;
-					eAVSyncCore::getInstance()->setDemuxInfo(did, 0, v, a, p);
-				}
+				/* Mirror of pause: just resume vsync increment + restart PCR
+				 * filter. STC continues from the frozen value (kernel engine
+				 * was never stopped, just held by VPAUSE). NO SET_DEMUX_INFO
+				 * because that runs pts_start which re-inits STC from the
+				 * (crept) demux PCR — source of the residual drift. */
 				if (m_pcr) m_pcr->start();
 				aml_vpause(0);
-				eDebug("[eTSMPEGDecoder] DreamNextGen user-unpause: SET_DEMUX_INFO+DMX_START+AMSTREAM_VPAUSE(0)");
+				eDebug("[eTSMPEGDecoder] DreamNextGen user-unpause: DMX_START+AMSTREAM_VPAUSE(0)");
 			}
 		}
 		s_dnxt_prev_state = m_state;
