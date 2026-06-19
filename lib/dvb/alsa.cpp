@@ -540,15 +540,9 @@ void eAlsaOutput::resumeWriter()
 {
     pthread_mutex_lock(&m_state_mutex);
     m_writer_paused = 0;
-    /* Force re-anchor on next valid slot. Even with kernel STC frozen via
-     * AMSTREAM_VPAUSE, some residual drift (+400-800ms) persists across
-     * pause/unpause — empirically the periodic re-anchor fixes it within
-     * 30s once EPIPE triggers, but doing it immediately on resume avoids
-     * the audible av-mismatch window. */
-    m_calced_apts = -1;
     pthread_cond_broadcast(&m_state_cond);
     pthread_mutex_unlock(&m_state_mutex);
-    eDebug("[eAlsaOutput] resumeWriter: writer wakes (m_calced_apts=-1 → re-anchor on first writei)");
+    eDebug("[eAlsaOutput] resumeWriter: writer wakes, snd_pcm_prepare on next writei (EBADFD)");
 }
 
 int eAlsaOutput::pushData(uint8_t *data, int size, int64_t pts)
