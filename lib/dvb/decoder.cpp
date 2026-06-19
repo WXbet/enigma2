@@ -1691,12 +1691,7 @@ int eTSMPEGDecoder::setState()
 		 *                                      timestamp_pcrscr_enable(0) → vsync ISR
 		 *                                      stops incrementing pts_pcrscr →
 		 *                                      kernel STC frozen at current value)
-		 *   5. STOP_TSYNC_PCR              →   eAVSyncCore::stopPCRSync()
-		 *                                      (del_timer_sync; required so the next
-		 *                                      unpause SET_DEMUX_INFO can re-init+add
-		 *                                      the timer without corrupting the kernel
-		 *                                      timer list)
-		 *   6. ALSA DRAIN                      [openatv default path handles audio]
+		 *   5. ALSA DRAIN                      [openatv default path handles audio]
 		 *
 		 * DreamOS UNPAUSE:                     Our UNPAUSE:
 		 *   1. open /dev/tsync                 [ephemeral inside setDemuxInfo()]
@@ -1726,23 +1721,18 @@ int eTSMPEGDecoder::setState()
 				::close(fd);
 			};
 			if (to_pause) {
-				/* AMSTREAM_VPAUSE(1) freezes STC via vsync ISR disable,
-				 * DMX_STOP halts PCR feed, STOP_TSYNC_PCR del_timer_sync's
-				 * the kernel pcr-check timer. The STOP is required because
-				 * unpause re-enters tsync_pcr_start() (via SET_DEMUX_INFO →
-				 * pts_start), which unconditionally calls init_timer +
-				 * add_timer — add_timer on an already-armed timer is a
-				 * kernel BUG (list corruption). With filepush also paused
-				 * via setSourcePause(), demux PCR doesn't creep during
-				 * pause, so the STC=0 reset inside STOP_TSYNC_PCR is
-				 * harmless: unpause re-anchors STC to the resumed demux PCR
-				 * which equals the pre-pause value plus the catch-up that
-				 * just landed after DMX_START — exactly where audio's first
-				 * new slot's PTS sits. apcr ≈ 0. */
+				/* AMSTREAM_VPAUSE(1) alone freezes STC via vsync ISR disable —
+				 * kernel pcr engine keeps running but vsync no longer
+				 * increments pts_pcrscr. DMX_STOP prevents new PCR packets
+				 * being fed to the engine. NO STOP_TSYNC_PCR: that calls
+				 * timestamp_pcrscr_set(0) which would force a STC re-init
+				 * at unpause and introduce +600-800ms drift (kernel re-anchors
+				 * to current demux PCR which crept during pause). DreamOS
+				 * strace confirms: no STOP_TSYNC_PCR, just freeze STC and
+				 * resume from frozen value. */
 				aml_vpause(1);
 				if (m_pcr) m_pcr->stop();
-				eAVSyncCore::getInstance()->stopPCRSync();
-				eDebug("[eTSMPEGDecoder] DreamNextGen user-pause: AMSTREAM_VPAUSE(1)+DMX_STOP+STOP_TSYNC_PCR");
+				eDebug("[eTSMPEGDecoder] DreamNextGen user-pause: AMSTREAM_VPAUSE(1)+DMX_STOP");
 			} else if (to_play) {
 				/* Restart sequence (DreamOS-matched with filepush actually
 				 * paused via setSourcePause):
