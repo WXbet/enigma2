@@ -775,6 +775,12 @@ int eDVBSoftDecoder::pause()
 	return -1;
 }
 
+void eDVBSoftDecoder::setUserPauseActive(bool b)
+{
+	if (m_decoder)
+		m_decoder->setUserPauseActive(b);
+}
+
 int eDVBSoftDecoder::setSlowMotion(int ratio)
 {
 	if (m_decoder)

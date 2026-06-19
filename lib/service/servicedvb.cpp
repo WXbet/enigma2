@@ -1992,6 +1992,9 @@ RESULT eDVBServicePlay::pause()
 		m_pause_position = -1;
 		m_slowmotion = 0;
 		m_is_paused = 1;
+#ifdef DREAMNEXTGEN
+		m_soft_decoder->setUserPauseActive(true);
+#endif
 		return m_soft_decoder->pause();
 	}
 	if (m_decoder)
@@ -1999,6 +2002,9 @@ RESULT eDVBServicePlay::pause()
 		m_pause_position = -1;
 		m_slowmotion = 0;
 		m_is_paused = 1;
+#ifdef DREAMNEXTGEN
+		m_decoder->setUserPauseActive(true);
+#endif
 		return m_decoder->pause();
 	} else
 		return -1;
@@ -2019,7 +2025,11 @@ RESULT eDVBServicePlay::unpause()
 			eTrace("[PreciseRecovery] User resumed playback. Resetting recovery state.");
 			resetRecoveryState();
 		}
-		return m_soft_decoder->play();
+		RESULT r = m_soft_decoder->play();
+#ifdef DREAMNEXTGEN
+		m_soft_decoder->setUserPauseActive(false);
+#endif
+		return r;
 	}
 	if (m_decoder)
 	{
@@ -2035,7 +2045,11 @@ RESULT eDVBServicePlay::unpause()
             resetRecoveryState();
         }
 
-		return m_decoder->play();
+		RESULT r = m_decoder->play();
+#ifdef DREAMNEXTGEN
+		m_decoder->setUserPauseActive(false);
+#endif
+		return r;
 	} else
 		return -1;
 }

@@ -1339,6 +1339,15 @@ void eDVBPCR::stop()
 		::ioctl(m_fd_demux, DMX_STOP);
 }
 
+int eDVBPCR::start()
+{
+	if (m_fd_demux < 0)
+		return -1;
+	if (::ioctl(m_fd_demux, DMX_START) < 0)
+		return -errno;
+	return 0;
+}
+
 eDVBPCR::~eDVBPCR()
 {
 	if (m_fd_demux >= 0)
@@ -1667,6 +1676,74 @@ int eTSMPEGDecoder::setState()
 #endif
 		}
 #ifdef DREAMNEXTGEN
+		/* User PVR/Timeshift pause/unpause — DreamOS-aligned sequence
+		 * (verified via strace2-timeshift.log + kernel source review).
+		 *
+		 * DreamOS PAUSE:                       Our PAUSE:
+		 *   1. /proc/stb/pcr_offset write      [skipped — already set once at start]
+		 *   2. SET_DEMUX_INFO                  [skipped — empirically deadlocks our kernel
+		 *                                       when run on a running engine]
+		 *   3. DMX_STOP on PCR filter      →   m_pcr->stop()
+		 *   4. VIDEO_FREEZE                →   AMSTREAM_IOC_VPAUSE(1) on /dev/amvideo
+		 *                                      (DVB VIDEO_FREEZE has no amlogic
+		 *                                      handler — AMSTREAM_VPAUSE is the only
+		 *                                      userspace ioctl reaching
+		 *                                      timestamp_pcrscr_enable(0) → vsync ISR
+		 *                                      stops incrementing pts_pcrscr →
+		 *                                      kernel STC frozen at current value)
+		 *   5. ALSA DRAIN                      [openatv default path handles audio]
+		 *
+		 * DreamOS UNPAUSE:                     Our UNPAUSE:
+		 *   1. open /dev/tsync                 [ephemeral inside setDemuxInfo()]
+		 *   2. SET_DEMUX_INFO              →   eAVSyncCore::setDemuxInfo()
+		 *   3. DMX_SET_PES_FILTER          →   m_pcr->start() (DMX_START)
+		 *   4. ALSA PLAY                   →   AMSTREAM_IOC_VPAUSE(0) (resumes STC)
+		 *
+		 * GATED on m_user_pause_active: only true PVR/Timeshift user-pause
+		 * triggers this path. Internal pause→play cycles (eDVBSoftDecoder
+		 * stream-stall recovery, trick/FF handover) leave the flag false
+		 * and skip the kernel-level sequence — they previously caused
+		 * ~228 ms av-sync drift per cycle which compounded across SoftCSA
+		 * cold-start recovery loops.
+		 *
+		 * _A_M='S', _IOW('S', 0x17, int) = 0x40045317. */
+		if (m_user_pause_active) {
+			bool to_pause = (s_dnxt_prev_state != statePause) && (m_state == statePause);
+			bool to_play  = (s_dnxt_prev_state == statePause) && (m_state == statePlay);
+			auto aml_vpause = [](int arg) {
+				int fd = ::open("/dev/amvideo", O_RDWR | O_CLOEXEC);
+				if (fd < 0) {
+					eDebug("[eTSMPEGDecoder] /dev/amvideo open failed: %m");
+					return;
+				}
+				if (::ioctl(fd, 0x40045317, arg) < 0)
+					eDebug("[eTSMPEGDecoder] AMSTREAM_VPAUSE(%d) failed: %m", arg);
+				::close(fd);
+			};
+			if (to_pause) {
+				aml_vpause(1);
+				if (m_pcr) m_pcr->stop();
+				/* STOP_TSYNC_PCR mirrors SET_DEMUX_INFO at unpause: kernel
+				 * pts_stop(VIDEO) + tsync_pcr_stop() so the engine's
+				 * tsync_pcr_started flag is cleared. Without this, the
+				 * SET_DEMUX_INFO at unpause runs pts_start on an already-
+				 * started engine → kernel mutex deadlock → box hang. */
+				eAVSyncCore::getInstance()->stopPCRSync();
+				eDebug("[eTSMPEGDecoder] DreamNextGen user-pause: AMSTREAM_VPAUSE(1)+DMX_STOP+STOP_TSYNC_PCR");
+			} else if (to_play) {
+				if (m_demux) {
+					uint8_t did = 0;
+					m_demux->getCADemuxID(did);
+					int v = (m_vpid   > 0 && m_vpid   < 0x1FFF) ? m_vpid   : 0x1FFF;
+					int a = (m_apid   > 0 && m_apid   < 0x1FFF) ? m_apid   : 0x1FFF;
+					int p = (m_pcrpid > 0 && m_pcrpid < 0x1FFF) ? m_pcrpid : 0x1FFF;
+					eAVSyncCore::getInstance()->setDemuxInfo(did, 0, v, a, p);
+				}
+				if (m_pcr) m_pcr->start();
+				aml_vpause(0);
+				eDebug("[eTSMPEGDecoder] DreamNextGen user-unpause: SET_DEMUX_INFO+DMX_START+AMSTREAM_VPAUSE(0)");
+			}
+		}
 		s_dnxt_prev_state = m_state;
 #endif
 		if (changed & (changeState|changeAudio) && m_audio)

@@ -831,6 +831,11 @@ public:
 	virtual RESULT play()=0;
 		/** Freeze frame. */
 	virtual RESULT pause()=0;
+		/** Hint: next pause()/play() cycle is a user PVR/Timeshift pause.
+		 * Amlogic backend uses this to gate AMSTREAM_IOC_VPAUSE so internal
+		 * pause→play (stream-stall recovery, trick handover) don't get
+		 * kernel STC freeze. Default no-op. */
+	virtual void setUserPauseActive(bool /*active*/) {}
 
 		/** fast forward by skipping frames. 0 is disabled, 2 is twice-the-speed, ... */
 	virtual RESULT setFastForward(int skip=0)=0;

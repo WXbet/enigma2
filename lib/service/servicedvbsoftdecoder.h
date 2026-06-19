@@ -58,6 +58,7 @@ public:
 	int setSlowMotion(int ratio);
 	int setFastForward(int ratio);
 	int setTrickmode();
+	void setUserPauseActive(bool b);
 
 	// Audio Control
 	int setAudioPID(int pid, int type);

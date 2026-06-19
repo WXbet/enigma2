@@ -104,6 +104,7 @@ private:
 public:
 	eDVBPCR(eDVBDemux *demux, int dev);
 	int startPid(int pid);
+	int start();
 	void stop();
 	virtual ~eDVBPCR();
 };
@@ -152,6 +153,9 @@ private:
 	int m_state;
 	int m_ff_sm_ratio;
 	bool m_has_audio;
+#ifdef DREAMNEXTGEN
+	bool m_user_pause_active = false;
+#endif
 	int setState();
 	ePtr<eConnection> m_demux_event_conn;
 	ePtr<eConnection> m_video_event_conn;
@@ -211,6 +215,9 @@ public:
 	RESULT set(); /* just apply settings, keep state */
 	RESULT play(); /* -> play */
 	RESULT pause(); /* -> pause */
+#ifdef DREAMNEXTGEN
+	void setUserPauseActive(bool b) override { m_user_pause_active = b; }
+#endif
 	RESULT setFastForward(int frames_to_skip); /* -> decoder fast forward */
 	RESULT setSlowMotion(int repeat); /* -> slow motion **/
 	RESULT setTrickmode(); /* -> highspeed fast forward */
