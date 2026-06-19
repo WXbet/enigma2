@@ -1984,6 +1984,16 @@ RESULT eDVBServicePlay::getLength(pts_t &len)
 RESULT eDVBServicePlay::pause()
 {
 	eDebug("[eDVBServicePlay] pause");
+#ifdef DREAMNEXTGEN
+	/* User PVR/Timeshift pause: hold the ALSA writer BEFORE the decoder
+	 * freezes its kernel state. snd_pcm_drain blocks ~170 ms — this is the
+	 * audible audio tail, after which the writer waits on its condvar and
+	 * FIFO content is preserved untouched. Without this, the writer keeps
+	 * consuming the FIFO during pause; on resume the FIFO head's PTS no
+	 * longer matches the (frozen) STC → seconds of audio drift. */
+	if (eAlsaOutput *a = eAlsaOutput::instance(nullptr))
+		a->pauseWriter();
+#endif
 	setFastForward_internal(0, m_slowmotion || m_fastforward > 1 || m_skipmode != 0);
 	// Check SoftDecoder first (only if session is active AND not in timeshift playback)
 	// During timeshift playback, we use the normal decoder for the timeshift file
@@ -2013,6 +2023,12 @@ RESULT eDVBServicePlay::pause()
 RESULT eDVBServicePlay::unpause()
 {
 	eDebug("[eDVBServicePlay] unpause");
+#ifdef DREAMNEXTGEN
+	/* Wake the ALSA writer AFTER the decoder kernel state has resumed
+	 * (STC unfrozen by AMSTREAM_VPAUSE(0)) so the first writei after
+	 * snd_pcm_prepare lines up with the resumed STC. The EBADFD handler
+	 * in the writer thread takes care of state SETUP → PREPARED. */
+#endif
 	setFastForward_internal(0, m_slowmotion || m_fastforward > 1 || m_skipmode != 0);
 	// Check SoftDecoder first (only if session is active AND not in timeshift playback)
 	// During timeshift playback, we use the normal decoder for the timeshift file
@@ -2028,6 +2044,8 @@ RESULT eDVBServicePlay::unpause()
 		RESULT r = m_soft_decoder->play();
 #ifdef DREAMNEXTGEN
 		m_soft_decoder->setUserPauseActive(false);
+		if (eAlsaOutput *a = eAlsaOutput::instance(nullptr))
+			a->resumeWriter();
 #endif
 		return r;
 	}
@@ -2048,6 +2066,8 @@ RESULT eDVBServicePlay::unpause()
 		RESULT r = m_decoder->play();
 #ifdef DREAMNEXTGEN
 		m_decoder->setUserPauseActive(false);
+		if (eAlsaOutput *a = eAlsaOutput::instance(nullptr))
+			a->resumeWriter();
 #endif
 		return r;
 	} else

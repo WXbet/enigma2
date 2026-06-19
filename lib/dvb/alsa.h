@@ -71,6 +71,7 @@ protected:
     int               m_stop;          /* 1 = idle, 0 = playing */
     int               m_shutdown;      /* destructor sets this */
     int               m_thread_idle;   /* 1 = safe to reconfigure */
+    int               m_writer_paused; /* 1 = writer holds (user PVR pause) */
     pthread_mutex_t   m_state_mutex;
     pthread_cond_t    m_state_cond;
 
@@ -134,6 +135,13 @@ public:
      * arm re-anchor on next chunk, signal kernel tsync discontinuity so the
      * pacer drops the now-stale pts_audio/pts_video and re-locks on fresh PCR. */
     void flushOnSeek();
+
+    /* User PVR/Timeshift pause: writer thread drains the ALSA HW buffer
+     * (snd_pcm_drain → state SETUP) and waits on m_state_cond. FIFO is
+     * NOT touched, so on resumeWriter the buffered chunks still match the
+     * frozen STC and audio resumes from exactly where it left off. */
+    void pauseWriter();
+    void resumeWriter();
 
     void thread();   /* writer thread loop */
 

@@ -389,6 +389,7 @@ eAlsaOutput::eAlsaOutput(const char *device_name)
     , m_stop(1)
     , m_shutdown(0)
     , m_thread_idle(0)
+    , m_writer_paused(0)
     , m_calced_apts(-1)
     , m_sync_log_count(0)
     , m_pcr_offset_computed(false)
@@ -526,6 +527,24 @@ void eAlsaOutput::flushOnSeek()
      * Kernel handles seek-discontinuity via its own demux flush path. */
 }
 
+void eAlsaOutput::pauseWriter()
+{
+    pthread_mutex_lock(&m_state_mutex);
+    m_writer_paused = 1;
+    pthread_cond_broadcast(&m_state_cond);
+    pthread_mutex_unlock(&m_state_mutex);
+    eDebug("[eAlsaOutput] pauseWriter: writer will drain ALSA and hold, FIFO preserved");
+}
+
+void eAlsaOutput::resumeWriter()
+{
+    pthread_mutex_lock(&m_state_mutex);
+    m_writer_paused = 0;
+    pthread_cond_broadcast(&m_state_cond);
+    pthread_mutex_unlock(&m_state_mutex);
+    eDebug("[eAlsaOutput] resumeWriter: writer wakes, snd_pcm_prepare on next writei (EBADFD)");
+}
+
 int eAlsaOutput::pushData(uint8_t *data, int size, int64_t pts)
 {
     if (m_stop || !m_fifo || !data || size <= 0) return -1;
@@ -600,6 +619,23 @@ void eAlsaOutput::thread()
         m_fifo->resume();
 
         while (!m_stop && m_handle) {
+            /* Writer-pause for user PVR/Timeshift pause. snd_pcm_drain
+             * blocks until the HW buffer empties (~170 ms) so the user
+             * hears a clean tail rather than an abrupt cut. ALSA state
+             * goes to SETUP; next writei after resume returns EBADFD,
+             * handler below calls snd_pcm_prepare and continues with the
+             * FIFO chunks that were untouched during the pause — they
+             * still align with the (also-frozen) STC. */
+            if (m_writer_paused) {
+                if (m_handle)
+                    snd_pcm_drain(m_handle);
+                pthread_mutex_lock(&m_state_mutex);
+                while (m_writer_paused && !m_stop && !m_shutdown)
+                    pthread_cond_wait(&m_state_cond, &m_state_mutex);
+                pthread_mutex_unlock(&m_state_mutex);
+                if (m_stop || m_shutdown) continue;
+            }
+
             /* Post-flush FIFO preroll: after flushOnSeek wait until the
              * FIFO has buffered ~30 slots (~1.2s of audio) before consuming.
              * This lets chunk-PTS and PCR settle so the next anchor lands
@@ -728,6 +764,14 @@ void eAlsaOutput::thread()
                         usleep(10000);
                         waited += 10;
                     }
+                } else if (got == -EBADFD) {
+                    /* PCM in SETUP state after our snd_pcm_drain at pause.
+                     * Clean transition — chunks in FIFO are the same ones we
+                     * paused on, still in sync with the (also-frozen) STC, so
+                     * skip the m_calced_apts=-1 below to keep the anchor. */
+                    snd_pcm_prepare(m_handle);
+                    eDebug("[eAlsaOutput] writei EBADFD (post-pause), prepared");
+                    continue;
                 } else if (got == -EIO) {
                     eDebug("[eAlsaOutput] writei EIO reopen ALSA");
                     closeAlsa();
