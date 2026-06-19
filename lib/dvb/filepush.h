@@ -31,15 +31,6 @@ public:
 
 	void pause();
 	void resume();
-	/* Same as pause() but skips the SIGUSR1 wake-up of the reader thread.
-	 * pause() is fine for the very brief lock-flush-resume cycle in
-	 * flushPVR, where SIGUSR1 is needed to abort the blocking driver-eof
-	 * poll immediately. For user PVR/Timeshift pause (seconds), the
-	 * SIGUSR1 caused iTsSource::read() to return -EINVAL instead of
-	 * -EINTR, busy-looping on the error path. pauseSoft just sets m_stop=2
-	 * and waits for the current read iteration to finish naturally
-	 * (microseconds for pread). */
-	void pauseSoft();
 
 	void enablePVRCommit(int);
 	/* stream mode will wait on EOF until more data is available. */
@@ -68,11 +59,7 @@ private:
 	int prio_class;
 	int prio;
 	iFilePushScatterGather *m_sg;
-	/* atomic so pauseSoft() can flip 0→2 without SIGUSR1 and the reader
-	 * thread (busy in poll() inside the EOF wait) sees the change on the
-	 * next loop iteration. With plain int the write was hidden by the
-	 * reader's register-cached copy when no signal acted as memory barrier. */
-	std::atomic<int> m_stop;
+	int m_stop;
 	int m_fd_dest;
 	int m_send_pvr_commit;
 	int m_stream_mode;

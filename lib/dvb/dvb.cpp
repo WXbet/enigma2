@@ -2547,15 +2547,6 @@ void eDVBChannel::forceSourcePosition(off_t offset)
 		m_pvr_thread->forcePosition(offset);
 }
 
-void eDVBChannel::setSourcePause(bool pause)
-{
-	if (!m_pvr_thread) return;
-	if (pause)
-		m_pvr_thread->pauseSoft();  /* no SIGUSR1 — avoid -EINVAL storm */
-	else
-		m_pvr_thread->resume();
-}
-
 void eDVBChannel::flushPVR(iDVBDemux *decoding_demux)
 {
 			/* when seeking, we have to ensure that all buffers are flushed.

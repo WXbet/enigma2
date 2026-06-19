@@ -770,15 +770,6 @@ public:
 	 * cue-sheet seek path (through tstools) is not available. */
 	virtual void forceSourcePosition(off_t /*offset*/) {}
 
-	/* Pause/resume the source feeder (PVR filepush thread). DreamNextGen
-	 * uses this on user pause so the kernel demux stops receiving fresh
-	 * TS — without it, the kernel PCR engine keeps parsing PCRs from the
-	 * still-flowing TS stream and pts_pcrscr drifts at near-real-time
-	 * rate despite our AMSTREAM_VPAUSE freeze (empirically verified:
-	 * 13.66 s STC drift over a 14.47 s pause). Default no-op for
-	 * backends that don't have a source feeder thread. */
-	virtual void setSourcePause(bool /*pause*/) {}
-
 		/* skipping must be done with a cue sheet */
 };
 
