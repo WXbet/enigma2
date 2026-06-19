@@ -1734,14 +1734,29 @@ int eTSMPEGDecoder::setState()
 				if (m_pcr) m_pcr->stop();
 				eDebug("[eTSMPEGDecoder] DreamNextGen user-pause: AMSTREAM_VPAUSE(1)+DMX_STOP");
 			} else if (to_play) {
-				/* Mirror of pause: just resume vsync increment + restart PCR
-				 * filter. STC continues from the frozen value (kernel engine
-				 * was never stopped, just held by VPAUSE). NO SET_DEMUX_INFO
-				 * because that runs pts_start which re-inits STC from the
-				 * (crept) demux PCR — source of the residual drift. */
+				/* Restart sequence (DreamOS-matched with filepush actually
+				 * paused via setSourcePause):
+				 *   1. DMX_START PCR filter (kernel demux resumes parsing)
+				 *   2. SET_DEMUX_INFO → kernel pts_start re-inits STC to
+				 *      current demux PCR. Without filepush pause this
+				 *      caused +600-800 ms drift (demux PCR had crept
+                                 *      during pause). With filepush actually paused
+				 *      the demux PCR equals the pre-pause value PLUS the
+				 *      catch-up that just happened after DMX_START — i.e.
+				 *      exactly where audio's first new slot's stream PTS
+				 *      is. STC and audio land aligned. apcr ≈ 0.
+				 *   3. AMSTREAM_VPAUSE(0) re-enables vsync ISR increment. */
 				if (m_pcr) m_pcr->start();
+				if (m_demux) {
+					uint8_t did = 0;
+					m_demux->getCADemuxID(did);
+					int v = (m_vpid   > 0 && m_vpid   < 0x1FFF) ? m_vpid   : 0x1FFF;
+					int a = (m_apid   > 0 && m_apid   < 0x1FFF) ? m_apid   : 0x1FFF;
+					int p = (m_pcrpid > 0 && m_pcrpid < 0x1FFF) ? m_pcrpid : 0x1FFF;
+					eAVSyncCore::getInstance()->setDemuxInfo(did, 0, v, a, p);
+				}
 				aml_vpause(0);
-				eDebug("[eTSMPEGDecoder] DreamNextGen user-unpause: DMX_START+AMSTREAM_VPAUSE(0)");
+				eDebug("[eTSMPEGDecoder] DreamNextGen user-unpause: DMX_START+SET_DEMUX_INFO+AMSTREAM_VPAUSE(0)");
 			}
 		}
 		s_dnxt_prev_state = m_state;
