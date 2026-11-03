@@ -88,9 +88,7 @@ bool csa_load_library()
 }
 
 eDVBCSAEngine::eDVBCSAEngine()
-	: m_key_even{}
-	, m_key_odd{}
-	, m_batch_size(0)
+	: m_batch_size(0)
 {
 }
 
@@ -239,7 +237,7 @@ void eDVBCSAEngine::setKey(int parity, uint8_t ecm_mode, const uint8_t* cw)
 	 * descramble() resolves slots from the generation it snapshots, so it
 	 * never reads the slot written here, and never a half-written one. */
 	std::atomic<uint32_t> &gen = par ? m_gen_odd : m_gen_even;
-	const uint32_t next = gen.load(std::memory_order_relaxed) + 1; // S8417: only this thread writes it
+	const uint32_t next = gen.load() + 1;
 
 	g_csa_api.key_set_ecm(ecm_mode, cw, slots[next % KEY_SLOTS]);
 
@@ -247,9 +245,9 @@ void eDVBCSAEngine::setKey(int parity, uint8_t ecm_mode, const uint8_t* cw)
 	m_last_ecm_mode[par] = ecm_mode;
 	m_last_cw_set[par] = true;
 
-	gen.store(next, std::memory_order_release); // S8417: publishes the key write above
+	gen.store(next);
 	std::atomic<bool> &key_set = par ? m_key_odd_set : m_key_even_set;
-	key_set.store(true, std::memory_order_release); // S8417: publishes the generation store above
+	key_set.store(true);
 
 	if (g_csa_api.get_ecm_table)
 	{
@@ -278,6 +276,10 @@ void eDVBCSAEngine::clearKeys()
 	m_prev_run_gen[1] = 0;
 	m_run_suspect = false;
 	m_probe_armed = false;
+	m_probe_fails = 0;
+	m_run_rebound = false;
+	m_run_start_us = 0;
+	m_late_deficit_ms = 0;
 }
 
 /* Try a key on one payload: does a PES start code come out? Only valid where
@@ -298,6 +300,20 @@ bool eDVBCSAEngine::probeKey(const dvbcsa_bs_key_t* key, const unsigned char* pk
 	g_csa_api.decrypt(key, one, 184);
 
 	return scratch[0] == 0x00 && scratch[1] == 0x00 && scratch[2] == 0x01;
+}
+
+static uint64_t csaMonotonicUs()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)(ts.tv_nsec / 1000);
+}
+
+int eDVBCSAEngine::takeLateDeficitMs()
+{
+	const int ms = m_late_deficit_ms;
+	m_late_deficit_ms = 0;
+	return ms;
 }
 
 // TS Packet Helpers
@@ -375,10 +391,10 @@ void eDVBCSAEngine::descramble(unsigned char* packets, int len)
 		return;
 
 	// setKey() may swap slots from the CWHandler thread at any time.
-	const bool even_set = m_key_even_set.load(std::memory_order_acquire); // S8417: pairs with release in setKey()
-	const bool odd_set = m_key_odd_set.load(std::memory_order_acquire); // S8417: pairs with release in setKey()
-	const uint32_t gen_even_now = m_gen_even.load(std::memory_order_acquire); // S8417: pairs with release in setKey()
-	const uint32_t gen_odd_now = m_gen_odd.load(std::memory_order_acquire); // S8417: pairs with release in setKey()
+	const bool even_set = m_key_even_set.load();
+	const bool odd_set = m_key_odd_set.load();
+	const uint32_t gen_even_now = m_gen_even.load();
+	const uint32_t gen_odd_now = m_gen_odd.load();
 
 	/* A suspect run bound the same generation as the previous run of its
 	 * parity, so its own CW was missing: take a newer key once one appears. */
@@ -390,6 +406,8 @@ void eDVBCSAEngine::descramble(unsigned char* packets, int len)
 			m_bound_gen[m_last_parity] = now;
 			m_prev_run_gen[m_last_parity] = now;
 			m_probe_armed = true;  // the new key still has to prove itself
+			m_probe_fails = 0;
+			m_run_rebound = true;  // only this proves a key came late
 		}
 	}
 
@@ -467,7 +485,10 @@ void eDVBCSAEngine::descramble(unsigned char* packets, int len)
 						even ? gen_even_now : gen_odd_now);
 			}
 
+			m_run_start_us = csaMonotonicUs();
 			m_probe_armed = true;
+			m_probe_fails = 0;
+			m_run_rebound = false;
 		}
 
 		/* Verify the bound key once, on a payload that must start with a PES
@@ -476,10 +497,29 @@ void eDVBCSAEngine::descramble(unsigned char* packets, int len)
 		{
 			m_probe_armed = false;
 			if (probeKey(key, pkt, offset))
+			{
+				/* Only a key switch mid-run proves a CW came late; a run that
+				 * checks out had its key from the start. */
+				if (m_run_suspect && m_run_rebound)
+				{
+					m_late_deficit_ms = (int)((csaMonotonicUs() - m_run_start_us) / 1000);
+					++m_late_keys;
+					if (m_late_keys <= 20 || !(m_late_keys % 500))
+						eWarning("[eDVBCSAEngine] late key #%u: parity=%d generation=%u arrived %dms into its period",
+							m_late_keys, parity, m_bound_gen[parity], m_late_deficit_ms);
+				}
 				m_run_suspect = false;
+				m_probe_fails = 0;
+			}
+			else if (++m_probe_fails < PROBE_TRIES)
+				m_probe_armed = true;  /* no PES start in there after all, try the next */
 			else if (!m_run_suspect)
 			{
-				/* In time, from the ECM, and still does not decrypt. */
+				/* The counter said this run had a CW of its own, and the key in
+				 * force does not open the period: it is the one before, and the
+				 * key of this period is still on the way. Back to waiting, so a
+				 * newer one is taken and how late it was grows the delay. */
+				m_run_suspect = true;
 				++m_dead_keys;
 				if (m_dead_keys <= 20 || !(m_dead_keys % 500))
 					eWarning("[eDVBCSAEngine] dead key #%u: parity=%d generation=%u does not decrypt its period",
